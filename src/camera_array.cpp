@@ -2,18 +2,47 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <future>
 #include <mutex>
 #include <set>
 #include <sstream>
 #include <stdexcept>
 #include <thread>
+#include <tuple>
 #include <utility>
 
 #include "hikquad/error.hpp"
 #include "hikquad/log.hpp"
 
 namespace hikquad {
+namespace {
+
+std::tuple<int, int, int, std::string> usbPortKey(const DeviceInfo& device) {
+    int bus = 999;
+    int port = 999;
+    int sub = 0;
+    if (device.link.found) {
+        std::sscanf(device.link.port_path.c_str(), "%d-%d.%d", &bus, &port, &sub);
+    }
+    return std::make_tuple(bus, port, sub, device.serial);
+}
+
+std::vector<DeviceInfo> orderDevices(const std::vector<DeviceInfo>& devices,
+                                     const std::string& order) {
+    std::vector<DeviceInfo> ordered = devices;
+    if (order == "serial") {
+        std::sort(ordered.begin(), ordered.end(),
+                  [](const DeviceInfo& a, const DeviceInfo& b) { return a.serial < b.serial; });
+    } else {
+        std::sort(ordered.begin(), ordered.end(), [](const DeviceInfo& a, const DeviceInfo& b) {
+            return usbPortKey(a) < usbPortKey(b);
+        });
+    }
+    return ordered;
+}
+
+}  // namespace
 
 struct CameraArray::Impl {
     std::vector<std::unique_ptr<Camera>> cameras;
@@ -55,17 +84,21 @@ void CameraArray::open(const ArrayConfig& config) {
                 << " physical USB3 Vision camera(s) are connected";
         throw std::runtime_error(message.str());
     }
+    const std::vector<DeviceInfo> ordered = orderDevices(available, config.device_order);
 
     std::vector<CameraConfig> configs = config.cameras;
     configs.resize(static_cast<size_t>(config.camera_count));
     std::set<std::string> used_serials;
     for (int i = 0; i < config.camera_count; ++i) {
         CameraConfig& camera_config = configs[static_cast<size_t>(i)];
+        // Frame/output index is the array position (cam1..cam4 clockwise), not
+        // the serial-sorted enumeration index.
+        camera_config.index = i;
         if (camera_config.serial.empty()) {
-            camera_config.index = i;
-        }
-        if (camera_config.serial.empty() && camera_config.index < 0) {
-            camera_config.index = i;
+            // Pin the device in physical/USB order so camera_0..N is stable
+            // across enumerations and independent of serial-number sorting.
+            camera_config.serial = ordered[static_cast<size_t>(i)].serial;
+            camera_config.index = -1;
         }
         if (config.grab_timeout_ms > 0) {
             camera_config.grab_timeout_ms = config.grab_timeout_ms;
@@ -89,6 +122,9 @@ void CameraArray::open(const ArrayConfig& config) {
             throw;
         }
         impl_->devices.push_back(impl_->cameras.back()->deviceInfo());
+        HIKQUAD_LOG(Info) << "camera " << i << " " << camera_config.role << " <- "
+                          << camera_config.serial << " (" << impl_->devices.back().link.port_path
+                          << ")";
     }
 
     try {

@@ -11,11 +11,14 @@ HIK_TEST(config_loads_overrides) {
         std::ofstream stream(path);
         stream << R"({
       "camera_count": 2,
-      "usb": {"image_node_num": 4, "grab_timeout_ms": 1500, "grab_strategy": "LatestImages"},
+      "device_order": "serial",
+      "usb": {"image_node_num": 4, "usb_transfer_ways": 4, "usb_transfer_size": 524288,
+              "incomplete_frame_retries": 5, "grab_timeout_ms": 1500,
+              "grab_strategy": "LatestImages"},
       "defaults": {"width": 640, "height": 480, "exposure_us": 2500.0},
       "cameras": [
-        {"serial": "CAM-A", "gain_db": 3.0},
-        {"serial": "CAM-B", "exposure_us": 9000.0}
+        {"role": "cam1", "serial": "CAM-A", "gain_db": 3.0},
+        {"role": "cam2", "serial": "CAM-B", "exposure_us": 9000.0}
       ],
       "panorama": {"out_width": 1024, "out_height": 256, "fov_h_deg": 180.0}
     })";
@@ -23,12 +26,21 @@ HIK_TEST(config_loads_overrides) {
     const hikquad::AppConfig config = hikquad::loadConfig(path.string());
     CHECK_EQ(config.array.camera_count, 2);
     CHECK_EQ(config.array.cameras.size(), size_t(2));
+    CHECK_EQ(config.array.device_order, std::string("serial"));
     CHECK_EQ(config.array.cameras[0].serial, std::string("CAM-A"));
+    CHECK_EQ(config.array.cameras[0].role, std::string("cam1"));
+    CHECK_EQ(config.array.cameras[1].role, std::string("cam2"));
     CHECK_EQ(config.array.cameras[0].width, 640);
     CHECK_EQ(config.array.cameras[0].height, 480);
     CHECK_NEAR(config.array.cameras[0].gain_db, 3.0, 1e-9);
     CHECK_NEAR(config.array.cameras[1].exposure_us, 9000.0, 1e-9);
     CHECK_EQ(config.usb.image_node_num, 4);
+    CHECK_EQ(config.usb.usb_transfer_ways, 4);
+    CHECK_EQ(config.usb.usb_transfer_size, 524288);
+    CHECK_EQ(config.usb.incomplete_frame_retries, 5);
+    CHECK_EQ(config.array.cameras[0].usb_transfer_ways, 4);
+    CHECK_EQ(config.array.cameras[0].usb_transfer_size, 524288);
+    CHECK_EQ(config.array.cameras[0].incomplete_frame_retries, 5);
     CHECK_EQ(config.usb.grab_timeout_ms, 1500);
     CHECK_EQ(config.panorama.out_width, 1024);
     CHECK_NEAR(config.panorama.fov_h_deg, 180.0, 1e-9);

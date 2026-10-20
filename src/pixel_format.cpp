@@ -81,6 +81,37 @@ int bytesPerPixel(MvGvspPixelType type) noexcept {
     return info != nullptr ? info->bytes_per_pixel : 0;
 }
 
+size_t expectedFrameBytes(MvGvspPixelType type, uint32_t width, uint32_t height) noexcept {
+    const size_t pixels = static_cast<size_t>(width) * static_cast<size_t>(height);
+    switch (type) {
+        case PixelType_Gvsp_Mono8:
+        case PixelType_Gvsp_BayerGR8:
+        case PixelType_Gvsp_BayerRG8:
+        case PixelType_Gvsp_BayerGB8:
+        case PixelType_Gvsp_BayerBG8:
+            return pixels;
+        case PixelType_Gvsp_Mono10:
+        case PixelType_Gvsp_Mono12:
+        case PixelType_Gvsp_BayerGR10:
+        case PixelType_Gvsp_BayerRG10:
+        case PixelType_Gvsp_BayerGB10:
+        case PixelType_Gvsp_BayerBG10:
+        case PixelType_Gvsp_BayerGR12:
+        case PixelType_Gvsp_BayerRG12:
+        case PixelType_Gvsp_BayerGB12:
+        case PixelType_Gvsp_BayerBG12:
+        case PixelType_Gvsp_YUV422_Packed:
+        case PixelType_Gvsp_YUV422_YUYV_Packed:
+            return pixels * 2;
+        case PixelType_Gvsp_RGB8_Packed:
+        case PixelType_Gvsp_BGR8_Packed:
+            return pixels * 3;
+        default:
+            // Packed 10/12-bit layouts: trust the SDK frame length.
+            return 0;
+    }
+}
+
 int bayerPatternIndex(MvGvspPixelType type) noexcept {
     switch (type) {
         case PixelType_Gvsp_BayerRG8:

@@ -13,6 +13,7 @@ namespace hikquad {
 
 struct CameraConfig {
     std::string serial;
+    std::string role;  // e.g. cam1..cam4, clockwise physical order
     int index = -1;
 
     int width = 1440;
@@ -44,11 +45,14 @@ struct CameraConfig {
     std::string trigger_source = "Software";
     std::string trigger_activation = "RisingEdge";
 
-    int image_node_num = 6;
+    int image_node_num = 8;
+    int usb_transfer_ways = 8;        // MV_USB_SetTransferWays, max 8 on this model
+    int usb_transfer_size = 1048576;  // MV_USB_SetTransferSize, bytes
     bool throughput_limit_mode = false;
     double throughput_limit_mbps = 0.0;
     int transfer_size = 0;
     int grab_timeout_ms = 3000;
+    int incomplete_frame_retries = 3;
     std::string grab_strategy = "OldestFirst";
 
     bool valid() const {
@@ -58,6 +62,7 @@ struct CameraConfig {
 
 struct CameraSettings {
     std::string serial;
+    std::string role;
     std::string model;
     int width = 0;
     int height = 0;
@@ -71,6 +76,8 @@ struct CameraSettings {
     std::string trigger_source;
     bool throughput_limit_mode = false;
     int image_node_num = 0;
+    unsigned int usb_transfer_ways = 0;
+    unsigned int usb_transfer_size = 0;
 };
 
 struct Frame {
@@ -88,9 +95,13 @@ struct Frame {
     uint64_t device_timestamp_ticks = 0;
     double exposure_us = 0.0;
     double gain_db = 0.0;
+    uint64_t transport_size = 0;
+    uint64_t expected_size = 0;
+    uint32_t lost_packets = 0;
+    bool complete = false;
 
     bool valid() const {
-        return !bgr.empty() || !raw.empty();
+        return complete && (!bgr.empty() || !raw.empty());
     }
 };
 

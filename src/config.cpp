@@ -61,6 +61,7 @@ void readCamera(const cv::FileNode& node, CameraConfig* camera) {
         return;
     }
     readString(node["serial"], &camera->serial);
+    readString(node["role"], &camera->role);
     readString(node["pixel_format"], &camera->pixel_format);
     readString(node["adc_bit_depth"], &camera->adc_bit_depth);
     readString(node["exposure_auto"], &camera->exposure_auto);
@@ -78,8 +79,11 @@ void readCamera(const cv::FileNode& node, CameraConfig* camera) {
     readInt(node["decimation"], &camera->decimation);
     readInt(node["bayer_conversion_quality"], &camera->bayer_conversion_quality);
     readInt(node["image_node_num"], &camera->image_node_num);
+    readInt(node["usb_transfer_ways"], &camera->usb_transfer_ways);
+    readInt(node["usb_transfer_size"], &camera->usb_transfer_size);
     readInt(node["transfer_size"], &camera->transfer_size);
     readInt(node["grab_timeout_ms"], &camera->grab_timeout_ms);
+    readInt(node["incomplete_frame_retries"], &camera->incomplete_frame_retries);
     readBool(node["reverse_x"], &camera->reverse_x);
     readBool(node["reverse_y"], &camera->reverse_y);
     readBool(node["keep_raw"], &camera->keep_raw);
@@ -141,6 +145,7 @@ AppConfig loadConfig(const std::string& path) {
     }
 
     readInt(storage["camera_count"], &config.array.camera_count);
+    readString(storage["device_order"], &config.array.device_order);
     readInt(storage["capture"]["frames"], &config.capture.frames);
     readDouble(storage["capture"]["interval_s"], &config.capture.interval_s);
     readString(storage["capture"]["output_dir"], &config.capture.output_dir);
@@ -149,6 +154,9 @@ AppConfig loadConfig(const std::string& path) {
     readBool(storage["capture"]["software_trigger"], &config.capture.software_trigger);
 
     readInt(storage["usb"]["image_node_num"], &config.usb.image_node_num);
+    readInt(storage["usb"]["usb_transfer_ways"], &config.usb.usb_transfer_ways);
+    readInt(storage["usb"]["usb_transfer_size"], &config.usb.usb_transfer_size);
+    readInt(storage["usb"]["incomplete_frame_retries"], &config.usb.incomplete_frame_retries);
     readBool(storage["usb"]["throughput_limit_mode"], &config.usb.throughput_limit_mode);
     readDouble(storage["usb"]["throughput_limit_mbps"], &config.usb.throughput_limit_mbps);
     readInt(storage["usb"]["transfer_size"], &config.usb.transfer_size);
@@ -170,11 +178,14 @@ AppConfig loadConfig(const std::string& path) {
 
     CameraConfig defaults;
     defaults.image_node_num = config.usb.image_node_num;
+    defaults.usb_transfer_ways = config.usb.usb_transfer_ways;
+    defaults.usb_transfer_size = config.usb.usb_transfer_size;
+    defaults.incomplete_frame_retries = config.usb.incomplete_frame_retries;
+    defaults.grab_timeout_ms = config.usb.grab_timeout_ms;
+    defaults.grab_strategy = config.usb.grab_strategy;
     defaults.throughput_limit_mode = config.usb.throughput_limit_mode;
     defaults.throughput_limit_mbps = config.usb.throughput_limit_mbps;
     defaults.transfer_size = config.usb.transfer_size;
-    defaults.grab_timeout_ms = config.usb.grab_timeout_ms;
-    defaults.grab_strategy = config.usb.grab_strategy;
     readCamera(storage["defaults"], &defaults);
 
     const cv::FileNode cameras = storage["cameras"];
@@ -224,8 +235,17 @@ void applyUsbDefaults(AppConfig& config) {
         if (camera.image_node_num <= 0) {
             camera.image_node_num = config.usb.image_node_num;
         }
+        if (camera.usb_transfer_ways <= 0) {
+            camera.usb_transfer_ways = config.usb.usb_transfer_ways;
+        }
+        if (camera.usb_transfer_size <= 0) {
+            camera.usb_transfer_size = config.usb.usb_transfer_size;
+        }
         if (camera.grab_timeout_ms <= 0) {
             camera.grab_timeout_ms = config.usb.grab_timeout_ms;
+        }
+        if (camera.incomplete_frame_retries < 0) {
+            camera.incomplete_frame_retries = config.usb.incomplete_frame_retries;
         }
         if (camera.grab_strategy.empty()) {
             camera.grab_strategy = config.usb.grab_strategy;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 #include "PixelType.h"
@@ -23,6 +24,10 @@ bool isBayer(MvGvspPixelType type) noexcept;
 bool isMono(MvGvspPixelType type) noexcept;
 bool isColor(MvGvspPixelType type) noexcept;
 int bytesPerPixel(MvGvspPixelType type) noexcept;
+
+/// Expected transport payload in bytes for one full frame.  Returns 0 for
+/// unknown / packed layouts where the SDK frame length should be trusted.
+size_t expectedFrameBytes(MvGvspPixelType type, uint32_t width, uint32_t height) noexcept;
 
 /// OpenCV demosaic code for an 8-bit Bayer MVS pixel type, or -1.
 /// MVS BayerRG8 is RGGB, which OpenCV calls COLOR_BayerBG2BGR.

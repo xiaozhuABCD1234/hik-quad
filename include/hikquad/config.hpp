@@ -18,11 +18,14 @@ struct CaptureConfig {
 };
 
 struct UsbConfig {
-    int image_node_num = 6;
+    int image_node_num = 8;
+    int usb_transfer_ways = 8;
+    int usb_transfer_size = 1048576;
     bool throughput_limit_mode = false;
     double throughput_limit_mbps = 0.0;
     int transfer_size = 0;
     int grab_timeout_ms = 3000;
+    int incomplete_frame_retries = 3;
     std::string grab_strategy = "OldestFirst";
 };
 

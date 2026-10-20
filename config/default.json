@@ -1,5 +1,6 @@
 {
   "camera_count": 4,
+  "device_order": "usb_port",
   "capture": {
     "frames": 1,
     "interval_s": 0.0,
@@ -9,7 +10,10 @@
     "software_trigger": false
   },
   "usb": {
-    "image_node_num": 6,
+    "image_node_num": 8,
+    "usb_transfer_ways": 8,
+    "usb_transfer_size": 1048576,
+    "incomplete_frame_retries": 3,
     "throughput_limit_mode": false,
     "throughput_limit_mbps": 0.0,
     "transfer_size": 0,
@@ -24,10 +28,10 @@
     "binning": 1,
     "decimation": 1,
     "frame_rate_enable": true,
-    "frame_rate": 30.0,
-    "exposure_us": 5000.0,
+    "frame_rate": 20.0,
+    "exposure_us": 15000.0,
     "exposure_auto": "Off",
-    "gain_db": 0.0,
+    "gain_db": 10.0,
     "gain_auto": "Off",
     "white_balance_auto": "Off",
     "gamma_enable": false,
@@ -36,7 +40,12 @@
     "bayer_conversion_quality": 1,
     "keep_raw": false
   },
-  "cameras": [],
+  "cameras": [
+    { "role": "cam1", "serial": "DB1505189" },
+    { "role": "cam2", "serial": "DB1505182" },
+    { "role": "cam3", "serial": "DB1505181" },
+    { "role": "cam4", "serial": "DB1505196" }
+  ],
   "calibration": {
     "pattern_cols": 8,
     "pattern_rows": 11,

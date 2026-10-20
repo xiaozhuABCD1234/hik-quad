@@ -360,6 +360,34 @@ struct Camera::Impl {
 
         setBool("GammaEnable", config.gamma_enable, false, "GammaEnable");
 
+        // USB3 Vision-specific transport knobs.  They are distinct from the
+        // GenICam FeatureTree nodes probed by setInt() above.
+        if (config.usb_transfer_ways > 0) {
+            const int result =
+                MV_USB_SetTransferWays(handle, static_cast<unsigned int>(config.usb_transfer_ways));
+            if (result != MV_OK) {
+                HIKQUAD_LOG(Warn) << "MV_USB_SetTransferWays(" << config.usb_transfer_ways
+                                  << ") ignored: 0x" << std::hex
+                                  << static_cast<unsigned int>(result) << " ("
+                                  << mvsErrorName(result) << "); this model supports up to 8";
+            }
+        }
+        if (config.usb_transfer_size > 0) {
+            const int size = config.usb_transfer_size;
+            if (size < 0x8000 || size > 0x200000 || size % 4 != 0) {
+                HIKQUAD_LOG(Warn) << "MV_USB_SetTransferSize(" << size
+                                  << ") skipped: Linux range is [32768, 2097152] and must be "
+                                     "a multiple of 4";
+            } else {
+                const int result = MV_USB_SetTransferSize(handle, static_cast<unsigned int>(size));
+                if (result != MV_OK) {
+                    HIKQUAD_LOG(Warn)
+                        << "MV_USB_SetTransferSize(" << size << ") ignored: 0x" << std::hex
+                        << static_cast<unsigned int>(result) << " (" << mvsErrorName(result) << ")";
+                }
+            }
+        }
+
         if (config.image_node_num > 0) {
             const int result =
                 MV_CC_SetImageNodeNum(handle, static_cast<unsigned int>(config.image_node_num));
@@ -422,6 +450,14 @@ struct Camera::Impl {
         out.trigger_mode = enumSymbolic(handle, "TriggerMode");
         out.trigger_source = enumSymbolic(handle, "TriggerSource");
         out.image_node_num = config.image_node_num;
+        unsigned int ways = 0;
+        unsigned int transfer_size = 0;
+        if (MV_USB_GetTransferWays(handle, &ways) == MV_OK) {
+            out.usb_transfer_ways = ways;
+        }
+        if (MV_USB_GetTransferSize(handle, &transfer_size) == MV_OK) {
+            out.usb_transfer_size = transfer_size;
+        }
         return out;
     }
 
@@ -430,12 +466,54 @@ struct Camera::Impl {
             throw std::runtime_error("grab() called on a camera that is not grabbing");
         }
         MV_FRAME_OUT out{};
-        const int result =
-            MV_CC_GetImageBuffer(handle, &out, static_cast<unsigned int>(std::max(1, timeout_ms)));
-        if (static_cast<unsigned int>(result) == MV_E_NODATA) {
-            return false;
+        uint64_t expected_size = 0;
+        uint64_t transport_size = 0;
+        int incomplete_attempts = 0;
+        uint32_t width = 0;
+        uint32_t height = 0;
+
+        // A truncated USB3 Vision frame is still returned as MV_OK by the SDK.
+        // Validate nFrameLen/LostPacket and retry, so callers never receive a
+        // half image that would silently corrupt calibration or stitching.
+        while (true) {
+            out = MV_FRAME_OUT{};
+            const int result = MV_CC_GetImageBuffer(
+                handle, &out, static_cast<unsigned int>(std::max(1, timeout_ms)));
+            if (static_cast<unsigned int>(result) == MV_E_NODATA) {
+                return false;
+            }
+            checkMvs(result, "MV_CC_GetImageBuffer");
+
+            const MV_FRAME_OUT_INFO_EX& frame_info = out.stFrameInfo;
+            width = frame_info.nExtendWidth > 0 ? frame_info.nExtendWidth : frame_info.nWidth;
+            height = frame_info.nExtendHeight > 0 ? frame_info.nExtendHeight : frame_info.nHeight;
+            transport_size =
+                frame_info.nFrameLenEx > 0 ? frame_info.nFrameLenEx : frame_info.nFrameLen;
+            expected_size = expectedFrameBytes(frame_info.enPixelType, width, height);
+            const bool complete =
+                out.pBufAddr != nullptr && width > 0 && height > 0 && frame_info.nLostPacket == 0 &&
+                (expected_size == 0 ? transport_size > 0 : transport_size >= expected_size);
+            if (complete) {
+                break;
+            }
+
+            HIKQUAD_LOG(Warn) << "incomplete frame from " << device.serial
+                              << ": transport=" << transport_size << " expected=" << expected_size
+                              << " lost_packets=" << frame_info.nLostPacket;
+            MV_CC_FreeImageBuffer(handle, &out);
+            if (incomplete_attempts++ >= config.incomplete_frame_retries) {
+                std::ostringstream message;
+                message << "incomplete frame from " << device.serial << " after "
+                        << (config.incomplete_frame_retries + 1)
+                        << " attempts (transport=" << transport_size
+                        << ", expected=" << expected_size
+                        << ", lost_packets=" << frame_info.nLostPacket
+                        << "). Lower the frame rate to 30-60 fps on a shared USB hub, move "
+                           "cameras to different USB controllers, or check usbfs_memory_mb.";
+                throw std::runtime_error(message.str());
+            }
         }
-        checkMvs(result, "MV_CC_GetImageBuffer");
+
         struct BufferGuard {
             void* handle;
             MV_FRAME_OUT* out;
@@ -447,8 +525,6 @@ struct Camera::Impl {
         } guard{handle, &out};
 
         const MV_FRAME_OUT_INFO_EX& info = out.stFrameInfo;
-        const uint32_t width = info.nExtendWidth > 0 ? info.nExtendWidth : info.nWidth;
-        const uint32_t height = info.nExtendHeight > 0 ? info.nExtendHeight : info.nHeight;
         if (width == 0 || height == 0 || out.pBufAddr == nullptr) {
             throw std::runtime_error("SDK returned an empty frame");
         }
@@ -456,7 +532,7 @@ struct Camera::Impl {
         const int height_i = static_cast<int>(height);
 
         Frame result_frame;
-        result_frame.camera_index = device.index;
+        result_frame.camera_index = config.index >= 0 ? config.index : device.index;
         result_frame.serial = device.serial;
         result_frame.sequence = ++sequence;
         result_frame.width = width;
@@ -471,6 +547,10 @@ struct Camera::Impl {
                                        ? static_cast<double>(info.fExposureTime)
                                        : config.exposure_us;
         result_frame.gain_db = info.fGain > 0.0F ? static_cast<double>(info.fGain) : config.gain_db;
+        result_frame.transport_size = transport_size;
+        result_frame.expected_size = expected_size;
+        result_frame.lost_packets = info.nLostPacket;
+        result_frame.complete = true;
 
         if (config.keep_raw) {
             if (isEightBit(info.enPixelType)) {
@@ -634,6 +714,7 @@ bool Camera::triggerSoftware() {
 CameraSettings Camera::settings() const {
     CameraSettings out = impl_->settings(config_);
     out.serial = device_.serial;
+    out.role = config_.role;
     out.model = device_.model;
     return out;
 }

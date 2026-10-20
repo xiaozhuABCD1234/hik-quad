@@ -13,6 +13,13 @@ HIK_TEST(pixel_format_names) {
     CHECK_TRUE(hikquad::pixelFormatByName("does-not-exist") == nullptr);
 }
 
+HIK_TEST(pixel_format_expected_frame_bytes) {
+    CHECK_EQ(hikquad::expectedFrameBytes(PixelType_Gvsp_BayerRG8, 1440, 1080), size_t(1555200));
+    CHECK_EQ(hikquad::expectedFrameBytes(PixelType_Gvsp_BayerRG12, 1440, 1080), size_t(3110400));
+    CHECK_EQ(hikquad::expectedFrameBytes(PixelType_Gvsp_BGR8_Packed, 640, 480), size_t(921600));
+    CHECK_EQ(hikquad::expectedFrameBytes(PixelType_Gvsp_BayerRG10_Packed, 1440, 1080), size_t(0));
+}
+
 HIK_TEST(pixel_format_bayer_mapping) {
     CHECK_EQ(hikquad::bayerPatternIndex(PixelType_Gvsp_BayerRG8), 0);
     CHECK_EQ(hikquad::bayerPatternIndex(PixelType_Gvsp_BayerBG8), 1);

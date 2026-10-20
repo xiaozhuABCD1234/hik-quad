@@ -20,6 +20,8 @@ struct FrameSet {
 struct ArrayConfig {
     int camera_count = 4;
     std::vector<CameraConfig> cameras;
+    /// "usb_port" (topology order, default) or "serial" (lexicographic).
+    std::string device_order = "usb_port";
     bool software_trigger = false;
     int grab_timeout_ms = 3000;
 };

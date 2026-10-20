@@ -68,6 +68,10 @@ void saveFrameSet(const hikquad::FrameSet& set, const std::string& directory,
         storage << "device_timestamp_ticks" << static_cast<double>(frame.device_timestamp_ticks);
         storage << "exposure_us" << frame.exposure_us;
         storage << "gain_db" << frame.gain_db;
+        storage << "transport_bytes" << static_cast<double>(frame.transport_size);
+        storage << "expected_bytes" << static_cast<double>(frame.expected_size);
+        storage << "lost_packets" << static_cast<int>(frame.lost_packets);
+        storage << "complete" << (frame.complete ? 1 : 0);
         storage << "image" << ("cam" + std::to_string(frame.camera_index) + extension);
         storage << "}";
     }
@@ -75,6 +79,7 @@ void saveFrameSet(const hikquad::FrameSet& set, const std::string& directory,
     storage << "camera_settings" << "[";
     for (const auto& camera : settings) {
         storage << "{";
+        storage << "role" << camera.role;
         storage << "serial" << camera.serial;
         storage << "model" << camera.model;
         storage << "width" << camera.width;
@@ -84,6 +89,8 @@ void saveFrameSet(const hikquad::FrameSet& set, const std::string& directory,
         storage << "gain_db" << camera.gain_db;
         storage << "frame_rate" << camera.frame_rate;
         storage << "resulting_frame_rate" << camera.resulting_frame_rate;
+        storage << "usb_transfer_ways" << static_cast<int>(camera.usb_transfer_ways);
+        storage << "usb_transfer_size" << static_cast<int>(camera.usb_transfer_size);
         storage << "}";
     }
     storage << "]";
@@ -183,6 +190,11 @@ int main(int argc, char** argv) {
         }
         config.array.software_trigger = software_trigger;
         config.array.camera_count = static_cast<int>(config.array.cameras.size());
+        if (software_trigger) {
+            HIKQUAD_LOG(Warn)
+                << "software trigger is timing sensitive on a shared USB3 hub; if frames are "
+                   "reported incomplete, use free-run at 30-60 fps or a hardware trigger";
+        }
 
         std::string output = cli.get("--out");
         if (output.empty()) {
@@ -193,10 +205,13 @@ int main(int argc, char** argv) {
         array.open(config.array);
         const std::vector<hikquad::CameraSettings> settings = array.settings();
         for (const auto& camera : settings) {
-            std::cout << "camera " << camera.serial << ": " << camera.width << "x" << camera.height
-                      << " " << camera.pixel_format << " exp=" << camera.exposure_us
-                      << "us gain=" << camera.gain_db << "dB fps=" << camera.frame_rate
-                      << " resulting=" << camera.resulting_frame_rate << "\n";
+            std::cout << "camera " << camera.role << " [" << camera.serial << "]: " << camera.width
+                      << "x" << camera.height << " " << camera.pixel_format
+                      << " exp=" << camera.exposure_us << "us gain=" << camera.gain_db
+                      << "dB fps=" << camera.frame_rate
+                      << " resulting=" << camera.resulting_frame_rate
+                      << " usb_ways=" << camera.usb_transfer_ways
+                      << " usb_transfer=" << camera.usb_transfer_size << "\n";
         }
 
         const std::vector<hikquad::FrameSet> sets = array.capture(frames, interval);
