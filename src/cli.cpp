@@ -10,8 +10,8 @@ namespace {
 
 bool isFlagOption(const std::string& name) {
     static const std::set<std::string> flags = {
-        "--raw",  "--software-trigger", "--no-save",         "--verbose", "--quiet", "--help",
-        "--json", "--no-lut",           "--include-virtual", "--check"};
+        "--raw",  "--software-trigger", "--no-save",         "--verbose", "--quiet",     "--help",
+        "--json", "--no-lut",           "--include-virtual", "--check",   "--horizontal"};
     return flags.count(name) != 0;
 }
 

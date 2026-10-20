@@ -14,8 +14,8 @@ namespace fs = std::filesystem;
 int main(int argc, char** argv) {
     hikquad::CliParser cli(argc, argv);
     const std::vector<std::string> allowed = {
-        "--config", "--calib",        "--output",  "--count", "--pano",      "--fov",
-        "--sigma",  "--nominal-step", "--verbose", "--quiet", "--log-level", "--help"};
+        "--config",       "--calib",      "--output",  "--count", "--pano",      "--fov", "--sigma",
+        "--nominal-step", "--horizontal", "--verbose", "--quiet", "--log-level", "--help"};
     std::string cli_error;
     if (!cli.validate(allowed, &cli_error)) {
         std::cerr << cli_error << "\n";
@@ -32,7 +32,8 @@ int main(int argc, char** argv) {
             "  --pano WxH           panorama size (default: 2048x512)\n"
             "  --fov DEG            horizontal field of view (default: 360)\n"
             "  --sigma DEG          angular blend sigma (default: 35)\n"
-            "  --nominal-step DEG   yaw step when extrinsics.yml is missing (default: 90)\n");
+            "  --nominal-step DEG   yaw step when extrinsics.yml is missing (default: 90)\n"
+            "  --horizontal         force yaw-only extrinsics for a horizontal 360 ring\n");
         return 0;
     }
     hikquad::app::initLogging(cli);
@@ -81,6 +82,9 @@ int main(int argc, char** argv) {
             hikquad::writeIntrinsicsYml((target_dir / "intrinsics.yml").string(), intrinsics);
             hikquad::writeExtrinsicsYml((target_dir / "extrinsics.yml").string(), extrinsics);
 
+            if (cli.has("--horizontal")) {
+                extrinsics = hikquad::horizontalizeExtrinsics(extrinsics);
+            }
             const hikquad::Lut lut = hikquad::buildCylindricalLut(
                 intrinsics, extrinsics, pano.width, pano.height, fov, sigma);
             hikquad::writeLutBin((target_dir / "lut.bin").string(), lut, camera);

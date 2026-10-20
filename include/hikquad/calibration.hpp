@@ -97,4 +97,10 @@ void finalizeIntrinsics(Intrinsics& intrinsics);
 cv::Mat nominalRotationY(double angle_deg);
 double opticalAxisAngleDeg(const cv::Mat& R_cw);
 
+/// Projects an extrinsics rotation onto the world Y axis (yaw only) and puts
+/// the camera centre on the world XZ plane.  Use this for a mechanically
+/// horizontal 4-camera ring where pitch/roll are known to be zero.
+Extrinsics horizontalizeExtrinsics(const Extrinsics& extrinsics);
+void applyHorizontalConstraint(CalibrationResult& result);
+
 }  // namespace hikquad

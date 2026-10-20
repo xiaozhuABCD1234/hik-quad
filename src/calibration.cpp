@@ -476,6 +476,34 @@ cv::Mat nominalRotationY(double angle_deg) {
     return (cv::Mat_<double>(3, 3) << c, 0.0, s, 0.0, 1.0, 0.0, -s, 0.0, c);
 }
 
+Extrinsics horizontalizeExtrinsics(const Extrinsics& extrinsics) {
+    Extrinsics out = extrinsics;
+    if (extrinsics.R_cw.empty()) {
+        return out;
+    }
+    const double yaw = opticalAxisAngleDeg(extrinsics.R_cw);
+    out.R_cw = nominalRotationY(yaw);
+    if (extrinsics.T_cw.empty()) {
+        out.T_cw = cv::Mat::zeros(3, 1, CV_64F);
+    } else {
+        out.T_cw = extrinsics.T_cw.reshape(1, 3).clone();
+        out.T_cw.convertTo(out.T_cw, CV_64F);
+        out.T_cw.at<double>(1, 0) = 0.0;
+    }
+    out.center_angle_deg = yaw;
+    out.has_angle = true;
+    return out;
+}
+
+void applyHorizontalConstraint(CalibrationResult& result) {
+    for (auto& camera : result.cameras) {
+        camera.extrinsics = horizontalizeExtrinsics(camera.extrinsics);
+    }
+    result.warnings.emplace_back(
+        "horizontal constraint applied: pitch/roll removed, camera centres placed on the "
+        "world XZ plane");
+}
+
 void estimateExtrinsics(CalibrationResult& result, int camera_count, double nominal_step_deg) {
     result.camera_count = camera_count;
     result.cameras.resize(static_cast<size_t>(camera_count));

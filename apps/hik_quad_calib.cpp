@@ -19,10 +19,10 @@ namespace fs = std::filesystem;
 int main(int argc, char** argv) {
     hikquad::CliParser cli(argc, argv);
     const std::vector<std::string> allowed = {
-        "--config",  "--input",     "--output",       "--pattern",   "--square-mm",
-        "--model",   "--min-views", "--max-rms",      "--no-lut",    "--pano",
-        "--fov",     "--sigma",     "--nominal-step", "--debug-dir", "--check",
-        "--verbose", "--quiet",     "--log-level",    "--help"};
+        "--config",     "--input",     "--output",       "--pattern",   "--square-mm",
+        "--model",      "--min-views", "--max-rms",      "--no-lut",    "--pano",
+        "--fov",        "--sigma",     "--nominal-step", "--debug-dir", "--check",
+        "--horizontal", "--verbose",   "--quiet",        "--log-level", "--help"};
     std::string cli_error;
     if (!cli.validate(allowed, &cli_error)) {
         std::cerr << cli_error << "\n";
@@ -46,6 +46,7 @@ int main(int argc, char** argv) {
             "  --sigma DEG          blend angular sigma (default: 35)\n"
             "  --nominal-step DEG   fallback yaw step (default: 90)\n"
             "  --debug-dir DIR      save corner overlay images\n"
+            "  --horizontal         force yaw-only extrinsics for a horizontal 360 ring\n"
             "  --check              only detect boards and print coverage\n");
         return 0;
     }
@@ -208,6 +209,9 @@ int main(int argc, char** argv) {
         }
 
         hikquad::estimateExtrinsics(result, camera_count, nominal_step);
+        if (cli.has("--horizontal")) {
+            hikquad::applyHorizontalConstraint(result);
+        }
         hikquad::app::ensureDirectory(output);
 
         for (int camera = 0; camera < camera_count; ++camera) {

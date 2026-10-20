@@ -26,6 +26,22 @@ HIK_TEST(nominal_rotation_is_consistent) {
     CHECK_NEAR(hikquad::opticalAxisAngleDeg(hikquad::nominalRotationY(270.0)), 270.0, 1e-9);
 }
 
+HIK_TEST(horizontal_constraint_removes_pitch_and_roll) {
+    const double pitch = 0.2;
+    const cv::Mat pitch_matrix = (cv::Mat_<double>(3, 3) << 1.0, 0.0, 0.0, 0.0, std::cos(pitch),
+                                  -std::sin(pitch), 0.0, std::sin(pitch), std::cos(pitch));
+    hikquad::Extrinsics input;
+    input.R_cw = rotationY(90.0) * pitch_matrix;
+    input.T_cw = (cv::Mat_<double>(3, 1) << 0.5, 0.2, -0.3);
+    input.center_angle_deg = hikquad::opticalAxisAngleDeg(input.R_cw);
+    const hikquad::Extrinsics output = hikquad::horizontalizeExtrinsics(input);
+    CHECK_NEAR(cv::norm(output.R_cw - hikquad::nominalRotationY(output.center_angle_deg)), 0.0,
+               1e-9);
+    CHECK_NEAR(output.T_cw.at<double>(1, 0), 0.0, 1e-12);
+    CHECK_NEAR(output.T_cw.at<double>(0, 0), 0.5, 1e-12);
+    CHECK_NEAR(output.T_cw.at<double>(2, 0), -0.3, 1e-12);
+}
+
 HIK_TEST(intrinsics_finalize_derives_circle) {
     hikquad::Intrinsics intrinsics;
     intrinsics.K = (cv::Mat_<double>(3, 3) << 450.0, 0.0, 720.0, 0.0, 450.0, 540.0, 0.0, 0.0, 1.0);

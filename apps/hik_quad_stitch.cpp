@@ -1,8 +1,10 @@
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -15,6 +17,36 @@
 namespace fs = std::filesystem;
 
 namespace {
+
+std::vector<int> parseOrder(const std::string& text, int count) {
+    std::vector<int> order;
+    if (text.empty()) {
+        for (int i = 0; i < count; ++i) {
+            order.push_back(i);
+        }
+        return order;
+    }
+    std::string normalized = text;
+    std::replace(normalized.begin(), normalized.end(), ',', ' ');
+    std::istringstream stream(normalized);
+    int value = 0;
+    while (stream >> value) {
+        order.push_back(value);
+    }
+    if (static_cast<int>(order.size()) != count) {
+        throw std::runtime_error("--order must list exactly " + std::to_string(count) +
+                                 " camera indices");
+    }
+    std::vector<bool> seen(static_cast<size_t>(count), false);
+    for (int index : order) {
+        if (index < 0 || index >= count || seen[static_cast<size_t>(index)]) {
+            throw std::runtime_error("--order must be a permutation of 0.." +
+                                     std::to_string(count - 1));
+        }
+        seen[static_cast<size_t>(index)] = true;
+    }
+    return order;
+}
 
 std::string findImage(const std::string& directory, int camera) {
     const std::vector<std::string> stems = {"cam" + std::to_string(camera), std::to_string(camera),
@@ -35,9 +67,9 @@ std::string findImage(const std::string& directory, int camera) {
 
 int main(int argc, char** argv) {
     hikquad::CliParser cli(argc, argv);
-    const std::vector<std::string> allowed = {"--config",    "--calib",   "--frames",  "--out",
-                                              "--count",     "--quality", "--verbose", "--quiet",
-                                              "--log-level", "--help"};
+    const std::vector<std::string> allowed = {"--config", "--calib",     "--frames",  "--out",
+                                              "--count",  "--order",     "--quality", "--verbose",
+                                              "--quiet",  "--log-level", "--help"};
     std::string cli_error;
     if (!cli.validate(allowed, &cli_error)) {
         std::cerr << cli_error << "\n";
@@ -52,6 +84,7 @@ int main(int argc, char** argv) {
             "  --frames DIR    source frames: cam0.png ... or 0.bmp ...\n"
             "  --out FILE      output image (default: output/panorama.jpg)\n"
             "  --count N       camera count (default: config)\n"
+            "  --order LIST    LUT camera -> source image index, e.g. 2,1,0,3\n"
             "  --quality N     JPEG quality (default: 95)\n");
         return 0;
     }
@@ -77,6 +110,7 @@ int main(int argc, char** argv) {
         hikquad::app::ensureDirectory(fs::path(output).parent_path().string());
 
         const int count = cli.getInt("--count", config.array.camera_count);
+        const std::vector<int> order = parseOrder(cli.get("--order"), count);
         const int quality = cli.getInt("--quality", 95);
         std::vector<cv::Mat> images;
         std::vector<cv::Mat> mapx;
@@ -110,9 +144,11 @@ int main(int argc, char** argv) {
                     }
                 }
             }
-            const std::string image_path = findImage(frames, camera);
+            const int source_camera = order[static_cast<size_t>(camera)];
+            const std::string image_path = findImage(frames, source_camera);
             if (image_path.empty()) {
-                throw std::runtime_error("no image for camera " + std::to_string(camera) + " in " +
+                throw std::runtime_error("no image for camera " + std::to_string(source_camera) +
+                                         " (LUT camera " + std::to_string(camera) + ") in " +
                                          frames);
             }
             cv::Mat image = cv::imread(image_path, cv::IMREAD_COLOR);
