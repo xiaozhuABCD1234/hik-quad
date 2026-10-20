@@ -6,6 +6,7 @@ add_executable(hikquad_tests
   test_lut.cpp
   test_calibration_math.cpp
   test_cli.cpp
+  test_pipeline.cpp
 )
 target_link_libraries(hikquad_tests PRIVATE hikquad_core)
 target_include_directories(hikquad_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

@@ -281,11 +281,23 @@ std::vector<CalibrationView> discoverViews(const std::string& root, int camera_c
     }
 
     // Layout B: root/view_000/cam0.png ... camN.png
+    // Only treat view_*/shot_* directories as calibration views; a sibling
+    // frames/ directory (used for stitching tests) must not shift view ids.
     std::vector<fs::path> directories;
+    std::vector<fs::path> fallback;
     for (const auto& entry : fs::directory_iterator(base, ec)) {
-        if (entry.is_directory()) {
-            directories.push_back(entry.path());
+        if (!entry.is_directory()) {
+            continue;
         }
+        const std::string name = entry.path().filename().string();
+        if (name.rfind("view", 0) == 0 || name.rfind("shot", 0) == 0) {
+            directories.push_back(entry.path());
+        } else {
+            fallback.push_back(entry.path());
+        }
+    }
+    if (directories.empty()) {
+        directories = fallback;
     }
     std::sort(directories.begin(), directories.end());
     for (const auto& directory : directories) {

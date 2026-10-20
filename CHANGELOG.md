@@ -4,6 +4,25 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-10-20
+
+### Fixed
+
+- `discoverViews()` now only treats `view_*/shot_*` directories as calibration
+  views, so a sibling `frames/` directory no longer shifts view ids or gets
+  mistaken for a checkerboard view.
+- Installed binaries locate `share/hik-quad/config/default.json` from the
+  executable prefix.
+- `hik_quad_lut` keeps rebuilt output directories self-contained by copying
+  `intrinsics.yml` / `extrinsics.yml`; `hik_quad_stitch` validates frame
+  resolution against the calibration.
+
+### Added
+
+- `synthetic_four_camera_pipeline` test: renders a 360-degree texture through
+  four virtual fisheye cameras, builds the four LUTs and verifies the stitched
+  panorama against the ground truth (PSNR > 22 dB).
+
 ## [0.1.0] - 2026-10-20
 
 ### Added

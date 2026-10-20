@@ -1,7 +1,9 @@
 #include <filesystem>
+#include <fstream>
 #include <opencv2/core.hpp>
 
 #include "hikquad/calib_io.hpp"
+#include "hikquad/calibration.hpp"
 #include "hikquad/lut.hpp"
 #include "test_framework.hpp"
 
@@ -62,4 +64,22 @@ HIK_TEST(lut_binary_roundtrip) {
     CHECK_NEAR(loaded.mapx.at<float>(2, 3), 12.5, 1e-6);
     CHECK_NEAR(loaded.mapy.at<float>(2, 3), 4.25, 1e-6);
     std::filesystem::remove(path);
+}
+
+HIK_TEST(discover_views_ignores_non_view_directories) {
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "hikquad_test_discover_views";
+    std::filesystem::remove_all(root);
+    for (const char* directory : {"view_000", "frames"}) {
+        const std::filesystem::path path = root / directory;
+        std::filesystem::create_directories(path);
+        for (int camera = 0; camera < 4; ++camera) {
+            std::ofstream stream(path / ("cam" + std::to_string(camera) + ".png"));
+            stream << "placeholder";
+        }
+    }
+    const std::vector<hikquad::CalibrationView> views = hikquad::discoverViews(root.string(), 4);
+    CHECK_EQ(views.size(), size_t(1));
+    CHECK_TRUE(views[0].image_paths[0].find("view_000") != std::string::npos);
+    std::filesystem::remove_all(root);
 }
