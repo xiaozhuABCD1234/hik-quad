@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "app_common.hpp"
+#include "hikquad/calib_io.hpp"
 #include "hikquad/config.hpp"
 #include "hikquad/lut.hpp"
 #include "hikquad/stitcher.hpp"
@@ -86,6 +87,8 @@ int main(int argc, char** argv) {
 
         for (int camera = 0; camera < count; ++camera) {
             const fs::path camera_dir = fs::path(calib) / ("camera_" + std::to_string(camera));
+            const hikquad::Intrinsics intrinsics =
+                hikquad::readIntrinsicsYml((camera_dir / "intrinsics.yml").string());
             hikquad::Lut lut = hikquad::readLutBin((camera_dir / "lut.bin").string(), camera);
             if (width == 0) {
                 width = lut.width;
@@ -115,6 +118,12 @@ int main(int argc, char** argv) {
             cv::Mat image = cv::imread(image_path, cv::IMREAD_COLOR);
             if (image.empty()) {
                 throw std::runtime_error("cannot read image: " + image_path);
+            }
+            if (image.cols != intrinsics.width || image.rows != intrinsics.height) {
+                throw std::runtime_error(
+                    "image " + image_path + " is " + std::to_string(image.cols) + "x" +
+                    std::to_string(image.rows) + " but calibration expects " +
+                    std::to_string(intrinsics.width) + "x" + std::to_string(intrinsics.height));
             }
             images.push_back(std::move(image));
             mapx.push_back(std::move(lut.mapx));
