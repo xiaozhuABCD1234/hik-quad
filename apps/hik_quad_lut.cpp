@@ -76,6 +76,11 @@ int main(int argc, char** argv) {
                           << " deg\n";
             }
 
+            // Keep the output directory self-contained so hik_quad_stitch can
+            // validate the source image size even when --output differs from --calib.
+            hikquad::writeIntrinsicsYml((target_dir / "intrinsics.yml").string(), intrinsics);
+            hikquad::writeExtrinsicsYml((target_dir / "extrinsics.yml").string(), extrinsics);
+
             const hikquad::Lut lut = hikquad::buildCylindricalLut(
                 intrinsics, extrinsics, pano.width, pano.height, fov, sigma);
             hikquad::writeLutBin((target_dir / "lut.bin").string(), lut, camera);
