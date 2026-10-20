@@ -37,15 +37,16 @@
 脚本对每个视角：
 
 1. 提示移动棋盘；
-2. 调用 `hik_quad_capture --frames 1 --software-trigger`；
+2. 调用 `hik_quad_capture --frames 1 --fps 20`（free-run，避免 HUB 下软件触发截断）；
 3. 保存到 `data/calib_images/view_000/cam0.png ... cam3.png`；
-4. 调用 `hik_quad_calib --check` 打印检测情况。
+4. 调用 `hik_quad_calib --check` 打印检测情况；
+5. 采完后用 `--horizontal --pano 4096x1024 --fov 360` 生成水平 360° 产物。
 
 ### 2.2 手动采集
 
 ```bash
 ./build/release/apps/hik_quad_capture \
-  --frames 1 --software-trigger \
+  --frames 1 --fps 20 \
   --exposure 15000 --gain 0 \
   --out data/calib_images/view_000
 ```
@@ -58,7 +59,10 @@
 - 每个视角至少 2 台相机同时看到棋盘，才能建立外参边；
   相邻相机要有足够重叠。
 - 棋盘倾斜 ±30° 以内，避免完全正对导致退化。
-- 相机和棋盘保持静止；用软件触发时四路时间差约 3~4 ms。
+- 相机和棋盘保持静止；当前 HUB 拓扑下 free-run 20 fps 四路完整，
+  不要用软件触发（实测会截断）。
+- 水平 360°：四台相机光轴尽量在同一水平面，俯仰/横滚用机械结构保证；
+  标定时加 `--horizontal` 强制只保留 yaw。
 - 四路曝光/增益/白平衡固定，关闭自动曝光/自动增益/自动白平衡。
 - 避免强反光、运动模糊、过曝（黑白格都要有细节）。
 
@@ -106,6 +110,26 @@
 没有连通的相机会回退到名义 yaw（`--nominal-step`，默认 90°），
 并在 `report.json` 中记录 warning。此时 `T_cw=0`，只适合纯旋转预览，
 不能用于有视差的拼接。
+
+## 4.1 水平 360° 约束
+
+如果四台相机是机械水平环（光轴大致在同一水平面、俯仰/横滚已由支架保证），
+建议标定时加 `--horizontal`：
+
+```bash
+./build/release/apps/hik_quad_calib \
+  --input data/calib_images --output data/calib \
+  --pano 4096x1024 --fov 360 --horizontal
+```
+
+`--horizontal` 会：
+
+- 把每路 `R_cw` 投影为绕世界 Y 轴的纯 yaw，去掉俯仰/横滚噪声；
+- 把相机光心的 Y 坐标置 0，保证环在同一水平面；
+- 保留 `center_angle_deg`，用于权重/接缝。
+
+这样生成的 LUT 是**水平 360° 圆柱投影**，不会因为某台相机俯仰噪声
+把地平线拉斜。若支架确实有俯仰/横滚，不要加该参数，改用完整 6DoF 外参。
 
 ## 5. 图像圆与 fold
 

@@ -38,7 +38,7 @@ ldd build/release/apps/hik_quad_list | grep Mv
 1. `./scripts/check_usb.sh`
 2. `cat /sys/module/usbcore/parameters/usbfs_memory_mb`，建议 2000
 3. 是否 3 台挂在同一 HUB；拆到不同控制器
-4. 降低 `--fps 30`
+4. 降低 `--fps 20`
 5. `dmesg -w` 看 USB reset / over-current
 6. 确认没有 MVS 客户端或其他进程独占相机
 

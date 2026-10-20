@@ -16,6 +16,8 @@ COUNT="${1:-20}"
 OUT="${2:-${ROOT}/data/calib_images}"
 EXPOSURE="${HIK_EXPOSURE_US:-15000}"
 GAIN="${HIK_GAIN_DB:-0}"
+FPS="${HIK_FPS:-20}"
+PANO="${HIK_PANO:-4096x1024}"
 
 if [ ! -x "${APP}" ] || [ ! -x "${CALIB}" ]; then
   echo "error: build first: cmake --preset release && cmake --build --preset release" >&2
@@ -35,7 +37,9 @@ for ((i = 0; i < COUNT; ++i)); do
   printf 'view %03d: place the board, then press Enter... ' "${i}"
   read -r _
   target="${OUT}/view_$(printf '%03d' "${i}")"
-  "${APP}" --frames 1 --software-trigger \
+  # Free-run at 20 fps: the two cameras behind the 5 Gbps HUB can return
+  # truncated frames at 30 fps; 20 fps is the verified-complete default.
+  "${APP}" --frames 1 --fps "${FPS}" \
     --exposure "${EXPOSURE}" --gain "${GAIN}" --out "${target}"
   echo
 done
@@ -47,4 +51,4 @@ echo "== detection check =="
 echo
 echo "== calibration =="
 "${CALIB}" --input "${OUT}" --output "${ROOT}/data/calib" \
-  --pano 2048x512 --fov 360
+  --pano "${PANO}" --fov 360 --horizontal

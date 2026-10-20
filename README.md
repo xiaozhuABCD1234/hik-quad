@@ -26,12 +26,14 @@
 
 本机实测：
 
-- 4 台物理相机**同时**以 1440×1080 / BayerRG8 / 165 fps 取流 60 帧，
-  4 路均无丢帧、无错误；
+- 4 台物理相机**同时**以 1440×1080 / BayerRG8 / **20 fps** 取流时，
+  4 路帧长度均为 1,555,200 B、`lost_packets=0`；
+- 165 fps 在 Bus 004 的 HUB 下会截断（两台 HUB 相机的帧长度在 56 KB~1.4 MB
+  之间跳变），驱动现在会检测并重试/报错，不会静默保存半帧；
 - MVS 还会枚举出一台虚拟相机（序列号以 `Vir` 开头），本工程用
   `MV_CC_EnumDevicesEx2()` 将其过滤，只保留 4 台物理相机；
-- 4 路 30 fps 采集一帧的软件触发时间戳离散约 3~4 ms；静态标定场景足够，
-  运动场景建议使用硬件触发（见 §7）。
+- 软件触发在共享 HUB 上会加剧截断；标定/360° 采集建议 free-run 30 fps，
+  运动场景用硬件触发（见 §7）。
 
 ## 2. 功能
 
@@ -165,9 +167,9 @@ physical USB3 Vision cameras: 4
 ### 5.2 采集
 
 ```bash
-# 四路各一帧，软件触发，20 ms 曝光
+# 四路各一帧，free-run 20 fps，20 ms 曝光（当前 USB 拓扑下最稳）
 ./build/release/apps/hik_quad_capture \
-  --frames 1 --software-trigger --exposure 20000 --gain 10 \
+  --frames 1 --fps 20 --exposure 20000 --gain 10 \
   --out data/captures/demo
 
 # 连续 10 组，每组间隔 0.5 s（输出 frame_000 ... frame_009）
@@ -231,7 +233,47 @@ data/calib/
   --out output/panorama.jpg
 ```
 
-### 5.5 由已有内外参重建 LUT
+### 5.5 水平 360°
+
+当前相机的物理顺序（顺时针）已写入 `config/default.json`：
+
+| 内部索引 | role | 序列号 | USB |
+|---|---|---|---|
+| 0 | cam1 | DB1505189 | 4-2.2 |
+| 1 | cam2 | DB1505182 | 4-1 |
+| 2 | cam3 | DB1505181 | 2-1 |
+| 3 | cam4 | DB1505196 | 4-2.1 |
+
+`CameraArray` 现在用**配置数组顺序**作为输出索引，不再按序列号或 USB 端口自动排序；
+帧文件名 `cam0..cam3`、`meta.json` 和标定 `camera_0..3` 都与该顺序一致。
+
+```bash
+# 采一帧（20 fps 是当前 HUB 拓扑的稳定值）
+./build/release/apps/hik_quad_capture --frames 1 --out data/captures/live360
+
+# 用棋盘格标定，强制水平 yaw-only，输出 360° 圆柱
+./build/release/apps/hik_quad_calib \
+  --input data/calib_images --output data/calib \
+  --pano 4096x1024 --fov 360 --horizontal
+
+# 拼接
+./build/release/apps/hik_quad_stitch \
+  --calib data/calib --frames data/captures/live360 \
+  --out output/live360.jpg
+```
+
+如果 LUT 的 `camera_i` 与当前图像顺序不一致，用 `--order` 显式映射：
+
+```bash
+# LUT camera 0 <- 图像 2, camera 1 <- 图像 1, ...
+./build/release/apps/hik_quad_stitch --calib data/calib --frames ... \
+  --order 2,1,0,3 --out output/live360.jpg
+```
+
+`--horizontal` 只保留 yaw、把光心放到同一水平面；适合机械水平环。
+如果支架有真实俯仰/横滚，不要使用该参数。
+
+### 5.6 由已有内外参重建 LUT
 
 ```bash
 ./build/release/apps/hik_quad_lut \
@@ -248,8 +290,12 @@ data/calib/
 ```json
 {
   "camera_count": 4,
+  "device_order": "usb_port",
   "usb": {
-    "image_node_num": 6,
+    "image_node_num": 8,
+    "usb_transfer_ways": 8,
+    "usb_transfer_size": 1048576,
+    "incomplete_frame_retries": 3,
     "throughput_limit_mode": false,
     "grab_timeout_ms": 3000,
     "grab_strategy": "OldestFirst"
@@ -259,21 +305,28 @@ data/calib/
     "height": 1080,
     "pixel_format": "BayerRG8",
     "adc_bit_depth": "Bits_12",
-    "frame_rate": 30.0,
-    "exposure_us": 5000.0,
-    "gain_db": 0.0,
+    "frame_rate": 20.0,
+    "exposure_us": 15000.0,
+    "gain_db": 10.0,
     "white_balance_auto": "Off"
   },
-  "cameras": [],
+  "cameras": [
+    { "role": "cam1", "serial": "DB1505189" },
+    { "role": "cam2", "serial": "DB1505182" },
+    { "role": "cam3", "serial": "DB1505181" },
+    { "role": "cam4", "serial": "DB1505196" }
+  ],
   "panorama": { "out_width": 2048, "out_height": 512, "fov_h_deg": 360.0 }
 }
 ```
 
-- `cameras` 为空时，按序列号排序自动选前 `camera_count` 台。
-- 需要固定“物理位置 ↔ 序号”时，在 `cameras` 中写 4 个对象并用 `serial` 指定，
-  例如 `{"serial": "DB1505181", "exposure_us": 15000}`。
+- `cameras` 数组的顺序就是内部 `cam0..camN` 顺序；当前按物理顺时针
+  **cam1=189、cam2=182、cam3=181、cam4=196** 固定。
+- `cameras` 为空时才使用 `device_order`（`usb_port` 或 `serial`）自动排序；
+  自动排序可能与物理环绕顺序不一致，正式 360° 标定建议显式写 `serial`。
 - 命令行参数会覆盖配置：`--exposure`、`--gain`、`--fps`、`--pixel-format`、
   `--width/--height`、`--serial`（可重复，顺序即相机顺序）。
+- 拼接时若 LUT 的 `camera_i` 与图像顺序不一致，用 `--order` 映射。
 
 ## 7. 同步与 USB
 
@@ -281,8 +334,9 @@ data/calib/
 
 - 默认自由运行（`trigger_mode=Off`），四路帧的采集时刻由各自曝光决定，
   帧集 `skew_ms` 只反映主机收到帧的时间差，不适合作为硬同步指标。
-- `--software-trigger` 会把四台相机设为 `TriggerMode=On / TriggerSource=Software`，
-  再依次发送 `TriggerSoftware`。实测 4 路时间戳离散约 3~4 ms，适合静态标定。
+- 当前 4 台相机分布在 Bus 002（1 台）和 Bus 004（3 台，其中 2 台经同一 HUB）。
+  **Bus 004 HUB 下的一路（DB1505196）在 30 fps 及以上会间歇截断**；
+  20 fps free-run 实测完整。标定/静态 360° 采集请用 20 fps。
 - 运动场景/高精度多视图：使用**硬件触发**。相机 Line2/Line5 支持双向 IO；
   可由主相机或外部信号源输出曝光开始脉冲，接到其余相机的 Line2，
   配置 `trigger_mode=On, trigger_source=Line2`。本项目已支持这些参数，
@@ -296,16 +350,23 @@ data/calib/
 - Bus 004：3 台（1 台直连 + 2 台经 5 Gbps HUB）
 
 1440×1080×1 B×165 fps ≈ **256.6 MB/s ≈ 2.05 Gbps/相机**。
-Bus 004 上 3 台同时满帧约 6.2 Gbps，已经超过单条 5 Gbps 链路；
-本机能跑通是因为控制器/端口分配和 SDK 缓冲共同作用，但这不是可移植的余量。
+Bus 004 上 3 台同时满帧约 6.2 Gbps，超过单条 5 Gbps 链路；本机实测
+**20 fps 四路完整；30 fps 起 HUB 下的 DB1505196 开始间歇截断**。
 
-如果只能同时读到 2 台，按顺序检查：
+驱动现在会：
 
-1. `cat /sys/module/usbcore/parameters/usbfs_memory_mb`，应 ≥ 1000（本机 2000）；
-2. udev 规则 `/etc/udev/rules.d/80-drivers-SDK-2bdf.rules` 是否存在；
-3. 是否把 3 台相机挂在同一个 HUB/同一条 5 Gbps 链路上；
-4. 降低 `--fps` 或使用 2×2 binning / 更小 ROI；
-5. 检查供电，优先使用带外部供电的 USB3 HUB。
+- 设置 `MV_USB_SetTransferWays`（本机型上限 8）和 `MV_USB_SetTransferSize`（默认 1 MiB）；
+- 校验每帧 `nFrameLen` 与 `width×height×bytes`，并检查 `lost_packets`；
+- 不完整帧自动重试，仍失败则报错并提示降低帧率/分散 USB 控制器；
+- 在 `meta.json` 记录 `transport_bytes/expected_bytes/lost_packets/complete`。
+
+如果只能同时读到 2 台或出现半帧，按顺序处理：
+
+1. 运行 `sudo ./scripts/install_usb_tuning.sh`（`usbfs_memory_mb=4000`、关闭 autosuspend）；
+2. `cat /sys/module/usbcore/parameters/usbfs_memory_mb` 应 ≥ 1000；
+3. 确认 udev 规则存在；
+4. 把 `--fps` 降到 20（本机 HUB 拓扑的稳定值）；
+5. 把 HUB 下的相机分散到不同控制器/root port，或换带外部供电的 USB3 HUB。
 
 详细命令与持久化配置见 [docs/usb-tuning.md](docs/usb-tuning.md)。
 
@@ -348,11 +409,14 @@ cd ../quad-camera
 | 项目 | 结果 |
 |---|---|
 | 物理相机枚举 | 4 台，另过滤 1 台虚拟相机 |
-| 4 路 165 fps / BayerRG8 / 60 帧 | 4 路全部成功，错误 0 |
-| 4 路 30 fps 软件触发 | 帧集时间戳 skew 约 3.2~3.6 ms |
-| 单帧 4 路拼接（2048×512，feather） | 约 68~73 ms（本机） |
+| 4 路 20 fps / BayerRG8 free-run | 每帧 1,555,200 B，lost_packets=0 |
+| 4 路 30~165 fps / Bus 004 HUB 下相机 | 帧长度截断，驱动检测并报错（不静默保存） |
+| 4 路 20 fps free-run | 帧集时间戳 skew 约 14~20 ms |
+| 单帧 4 路拼接（2048×512，feather） | 约 66~73 ms（本机） |
+| 实际 4 路水平 360（cam1..4 = 189/182/181/196） | 2048×512 预览，旧 quad-camera 标定，存在视差重影 |
+| 水平 360°（`--horizontal`）LUT + 拼接 | 2048×512 / 4096×1024 均验证 |
 | 用 quad-camera 标定数据 + 本工程 LUT 拼接 | 输出与 quad-camera 结果肉眼一致 |
-| 单元测试 | 16/16 通过 |
+| 单元测试 | 18/18 通过 |
 
 ## 11. 开发规范
 

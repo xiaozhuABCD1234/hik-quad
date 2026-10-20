@@ -37,9 +37,21 @@ BayerRG8、1440×1080、165 fps：
 | 30 fps | 0.37 Gbps | 0.75 Gbps | 1.12 Gbps | 1.49 Gbps |
 
 一条 USB3 Gen1 链路理论 5 Gbps，实际有效载荷通常 3.2~4.0 Gbps。
-**同一 HUB/同一 root port 下挂 3 台满帧一定超预算**。  
-解决办法：把相机分散到不同控制器/root port；或把每路限到 ~100 fps 以下；
-或用 2×2 binning / 更小 ROI。
+**同一 HUB/同一 root port 下挂 3 台满帧一定超预算**。
+
+本机实测（1440×1080 BayerRG8，200~300 帧/路）：
+
+| 配置 | 直连 2 路 | HUB 下 2 路 |
+|---|---|---|
+| 20 fps free-run | 完整 | 完整 |
+| 30 fps free-run | 完整 | 间歇截断（DB1505196） |
+| 60 fps free-run | 完整 | 截断 |
+| 100/120/165 fps free-run | 完整 | 截断 |
+| 20~60 fps 软件触发 | 完整 | 截断/超时 |
+
+结论：**当前拓扑下 20 fps 是已验证的安全值**；30 fps 已经处于 HUB 的临界点。
+需要 30 fps 以上时，必须把 HUB 下的相机（尤其 DB1505196）分散到不同 USB
+控制器，或使用更高带宽的采集卡，而不是继续调 SDK 参数。
 
 本工程 `CameraConfig` 的 `frame_rate` 会写 `AcquisitionFrameRate`
 （并打开 `AcquisitionFrameRateEnable`），这是本机型实际可用的限速手段。
@@ -58,23 +70,22 @@ cat /sys/module/usbcore/parameters/usbfs_memory_mb
 本机为 **2000 MB**。临时提高（root）：
 
 ```bash
-echo 2000 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
+echo 4000 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
 ```
 
-持久化：
+持久化 + 关闭 USB autosuspend，直接运行：
 
 ```bash
-echo 'options usbcore usbfs_memory_mb=2000' | \
-  sudo tee /etc/modprobe.d/99-hik-usb.conf
-sudo update-initramfs -u
-# 重启后确认
-cat /sys/module/usbcore/parameters/usbfs_memory_mb
+sudo ./scripts/install_usb_tuning.sh
 ```
+
+脚本会写 `/etc/modprobe.d/99-hik-quad-usb.conf`（`usbfs_memory_mb=4000`）
+和 `/etc/udev/rules.d/99-hik-quad-usb.rules`（`2bdf` 设备 `power/control=on`）。
 
 建议值：
 
 - 2 台 1440×1080：≥ 512 MB
-- 4 台 1440×1080：≥ 1024 MB，推荐 2000 MB
+- 4 台 1440×1080：≥ 1024 MB，推荐 2000~4000 MB
 - 更高分辨率/更高帧率：按 `width × height × bytes × 队列深度 × 相机数` 估算
 
 ## 4. udev 权限
@@ -92,28 +103,33 @@ ls -l /etc/udev/rules.d/80-drivers-SDK-2bdf.rules
 
 本机型（MV-CB016-10UC-S）实测：
 
-| 节点 | 是否存在 | 说明 |
+| 节点/接口 | 是否存在 | 说明 |
 |---|---|---|
 | `DeviceLinkThroughputLimitMode` | 是 | On/Off |
 | `DeviceLinkThroughputLimit` | **否**（0x80000106） | 不能按字节限速 |
-| `TransferSize` | **否**（0x80000109） | USB3 Vision 传输块大小不可写 |
+| GenICam `TransferSize` | **否**（0x80000109） | 不是 FeatureTree 节点 |
+| `MV_USB_SetTransferSize` | 是（SDK 接口） | 默认 1 MiB，Linux 范围 32 KiB~2 MiB |
+| `MV_USB_SetTransferWays` | 是（SDK 接口） | 本机型上限 **8**，16/32 返回 0x80000025 |
 | `AcquisitionFrameRate` | 是 | 实际限速入口 |
-| `MV_CC_SetImageNodeNum` | 是（SDK 接口） | 建议 6~8 |
+| `MV_CC_SetImageNodeNum` | 是（SDK 接口） | 建议 8 |
 
-因此 `config/default.json` 默认：
+`config/default.json` 默认：
 
 ```json
 "usb": {
-  "image_node_num": 6,
+  "image_node_num": 8,
+  "usb_transfer_ways": 8,
+  "usb_transfer_size": 1048576,
+  "incomplete_frame_retries": 3,
   "throughput_limit_mode": false,
   "grab_timeout_ms": 3000,
   "grab_strategy": "OldestFirst"
 }
 ```
 
-如果换到支持 `DeviceLinkThroughputLimit` 的机型，可设
-`throughput_limit_mode=true` 和 `throughput_limit_mbps=...`，
-程序会以 bytes/s 写入；失败时只告警，不阻断取流。
+注意：`MV_USB_SetTransferWays`/`SetTransferSize` **不能把 3 台 165 fps 的
+HUB 链路变成可用**；它们只影响 URB 调度。实测 16/32 ways 直接失败，
+2 MiB transfer size 也没有改善截断。真正的限制是 5 Gbps 上行带宽和帧率。
 
 ## 6. HUB 与供电
 
@@ -126,15 +142,24 @@ ls -l /etc/udev/rules.d/80-drivers-SDK-2bdf.rules
 ## 7. 快速自检
 
 ```bash
+sudo ./scripts/install_usb_tuning.sh
 ./scripts/check_usb.sh
 ./build/release/apps/hik_quad_list
-./build/release/apps/hik_quad_capture --frames 1 --out /tmp/hik_smoke --no-save
+./build/release/apps/hik_quad_capture --frames 1 --fps 20 --no-save
 ```
 
-若 `hik_quad_list` 只能看到 2 台：
+检查 `meta.json`：
 
-1. 换端口/换线，确认 `lsusb` 和 sysfs 都能看到 4 台；
-2. 提高 `usbfs_memory_mb`；
-3. 检查是否有 MVS 客户端、ROS2 节点或其他进程占用了相机（独占访问）；
-4. 降低 `--fps` 到 30 再试；
-5. 用 `dmesg -w` 观察 USB reset/over-current。
+```bash
+grep -E 'transport_bytes|expected_bytes|lost_packets|complete' meta.json
+```
+
+正常应为 `1555200 / 1555200 / 0 / 1`。若出现 `complete: 0` 或驱动报
+`incomplete frame ... after N attempts`：
+
+1. 把 `--fps` 降到 30，确认四路完整；
+2. 换端口/换线，确认 `lsusb` 和 sysfs 都能看到 4 台、5000M；
+3. 提高 `usbfs_memory_mb` 并关闭 autosuspend；
+4. 检查是否有 MVS 客户端、ROS2 节点或其他进程占用了相机（独占访问）；
+5. 把 HUB 下的相机分散到不同控制器，或换带外部供电的 HUB；
+6. 用 `dmesg -w` 观察 USB reset/over-current。

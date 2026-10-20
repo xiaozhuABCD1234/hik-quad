@@ -4,6 +4,38 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-10-20
+
+### Added
+
+- USB3 Vision transport tuning: `MV_USB_SetTransferWays`,
+  `MV_USB_SetTransferSize`, configurable node count and retry count.
+- Frame integrity validation in `Camera::grab()`: checks `nFrameLen` against
+  the expected payload, rejects `lost_packets > 0`, retries incomplete frames
+  and reports an actionable error instead of returning a half image.
+- Explicit camera order/role (`cam1..cam4`) in config; frame/output indices now
+  follow the configured clockwise order rather than serial-number enumeration.
+- `--horizontal` for `hik_quad_calib` / `hik_quad_lut`: yaw-only extrinsics
+  and camera centres on the world XZ plane for a mechanically horizontal 360° ring.
+- `--order` for `hik_quad_stitch`: explicit LUT camera -> source image mapping.
+- `scripts/install_usb_tuning.sh` for `usbfs_memory_mb=4000` and USB autosuspend.
+- Frame triage fields in capture metadata: `transport_bytes`, `expected_bytes`,
+  `lost_packets`, `complete`.
+
+### Fixed
+
+- The two cameras behind the 5 Gbps HUB returned truncated frames at 165 fps;
+  the driver now detects this. Current topology is stable at 20 fps.
+- Output files `cam0..cam3` now match the configured physical order
+  `cam1=DB1505189, cam2=DB1505182, cam3=DB1505181, cam4=DB1505196`.
+
+### Changed
+
+- Default capture is 20 fps, 15 ms exposure, 10 dB gain for the current
+  Bus 004 HUB topology.
+- Software trigger is marked as unreliable on the shared HUB; calibration uses
+  free-run at 20 fps.
+
 ## [0.1.1] - 2026-10-20
 
 ### Fixed
