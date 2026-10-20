@@ -130,6 +130,16 @@ cmake --preset release -DHIK_SDK_ROOT=/path/to/MVS
 RUNPATH，因此通常**不需要**先 `source /opt/MVS/bin/set_env_path.sh`；
 程序启动时也会补齐 `MVCAM_COMMON_RUNENV` 等环境变量。
 
+可选安装：
+
+```bash
+cmake --install build/release --prefix /usr/local
+hik_quad_list
+```
+
+安装后配置位于 `share/hik-quad/config/default.json`，程序会从可执行文件
+的 `../share/hik-quad/config/` 自动找到它；也可以用 `--config` 指定。
+
 ## 5. 快速开始
 
 ### 5.1 查看相机

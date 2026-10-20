@@ -260,6 +260,21 @@ std::string findDefaultConfig() {
     if (fs::exists("config/default.json")) {
         return "config/default.json";
     }
+    const std::string executable = executableDirectory();
+    if (!executable.empty()) {
+        const fs::path directory(executable);
+        const fs::path candidates[] = {
+            directory / "config" / "default.json",
+            directory / ".." / "share" / "hik-quad" / "config" / "default.json",
+            directory / ".." / "etc" / "hik-quad" / "default.json",
+        };
+        for (const auto& candidate : candidates) {
+            std::error_code ec;
+            if (fs::exists(candidate, ec)) {
+                return fs::canonical(candidate, ec).string();
+            }
+        }
+    }
     return {};
 }
 
