@@ -1,0 +1,55 @@
+{
+  "camera_count": 4,
+  "capture": {
+    "frames": 1,
+    "interval_s": 0.0,
+    "output_dir": "data/captures",
+    "image_format": "png",
+    "save_raw": false,
+    "software_trigger": false
+  },
+  "usb": {
+    "image_node_num": 6,
+    "throughput_limit_mode": false,
+    "throughput_limit_mbps": 0.0,
+    "transfer_size": 0,
+    "grab_timeout_ms": 3000,
+    "grab_strategy": "OldestFirst"
+  },
+  "defaults": {
+    "width": 1440,
+    "height": 1080,
+    "pixel_format": "BayerRG8",
+    "adc_bit_depth": "Bits_12",
+    "binning": 1,
+    "decimation": 1,
+    "frame_rate_enable": true,
+    "frame_rate": 30.0,
+    "exposure_us": 5000.0,
+    "exposure_auto": "Off",
+    "gain_db": 0.0,
+    "gain_auto": "Off",
+    "white_balance_auto": "Off",
+    "gamma_enable": false,
+    "trigger_mode": "Off",
+    "trigger_source": "Software",
+    "bayer_conversion_quality": 1,
+    "keep_raw": false
+  },
+  "cameras": [],
+  "calibration": {
+    "pattern_cols": 8,
+    "pattern_rows": 11,
+    "square_mm": 100.0,
+    "model": "fisheye",
+    "min_views": 10,
+    "max_rms": 1.0,
+    "emit_lut": true
+  },
+  "panorama": {
+    "out_width": 2048,
+    "out_height": 512,
+    "fov_h_deg": 360.0,
+    "blend_sigma_deg": 35.0
+  }
+}

@@ -1,0 +1,34 @@
+include(GNUInstallDirs)
+
+install(
+  TARGETS hikquad_core
+  EXPORT hikquadTargets
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+
+install(
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/hikquad
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+  FILES_MATCHING PATTERN "*.hpp"
+)
+install(FILES ${CMAKE_BINARY_DIR}/generated/hikquad/version.hpp
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/hikquad)
+
+install(
+  TARGETS hik_quad_list hik_quad_capture hik_quad_calib hik_quad_lut hik_quad_stitch
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/config DESTINATION ${CMAKE_INSTALL_DATADIR}/hik-quad)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/docs DESTINATION ${CMAKE_INSTALL_DATADIR}/hik-quad)
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/README.md DESTINATION ${CMAKE_INSTALL_DATADIR}/hik-quad)
+
+install(
+  EXPORT hikquadTargets
+  FILE hikquadTargets.cmake
+  NAMESPACE hikquad::
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/hikquad
+)
