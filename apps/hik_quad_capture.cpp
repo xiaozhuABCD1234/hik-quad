@@ -1,10 +1,15 @@
-#include <algorithm>
+#include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <opencv2/imgcodecs.hpp>
+#include <opencv2/videoio.hpp>
 #include <sstream>
+#include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "app_common.hpp"
@@ -48,12 +53,19 @@ void saveFrameSet(const hikquad::FrameSet& set, const std::string& directory,
                 stream.write(
                     reinterpret_cast<const char*>(frame.raw.data),
                     static_cast<std::streamsize>(frame.raw.total() * frame.raw.elemSize()));
+                if (!stream.good()) {
+                    throw std::runtime_error("cannot write raw buffer: " + raw_path);
+                }
             }
         }
     }
 
-    cv::FileStorage storage((fs::path(directory) / "meta.json").string(),
+    const std::string meta_path = (fs::path(directory) / "meta.json").string();
+    cv::FileStorage storage(meta_path,
                             cv::FileStorage::WRITE | cv::FileStorage::FORMAT_JSON);
+    if (!storage.isOpened()) {
+        throw std::runtime_error("cannot write metadata: " + meta_path);
+    }
     storage << "index" << static_cast<int>(set.index);
     storage << "skew_ms" << set.skew_ms;
     storage << "frames" << "[";
@@ -97,15 +109,20 @@ void saveFrameSet(const hikquad::FrameSet& set, const std::string& directory,
     storage.release();
 }
 
+std::string frameDirectory(const std::string& output, int index) {
+    std::ostringstream name;
+    name << "frame_" << std::setw(3) << std::setfill('0') << index;
+    return (fs::path(output) / name.str()).string();
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     hikquad::CliParser cli(argc, argv);
     const std::vector<std::string> allowed = {
-        "--config", "--frames",           "--interval", "--out",     "--exposure", "--gain",
-        "--fps",    "--pixel-format",     "--width",    "--height",  "--format",   "--raw",
-        "--serial", "--software-trigger", "--no-save",  "--verbose", "--quiet",    "--log-level",
-        "--help"};
+        "--config", "--frames", "--interval", "--out", "--exposure", "--gain", "--fps",
+        "--pixel-format", "--width", "--height", "--format", "--raw", "--video", "--serial",
+        "--software-trigger", "--no-save", "--verbose", "--quiet", "--log-level", "--help"};
     std::string cli_error;
     if (!cli.validate(allowed, &cli_error)) {
         std::cerr << cli_error << "\n";
@@ -114,20 +131,21 @@ int main(int argc, char** argv) {
     if (cli.has("--help")) {
         hikquad::CliParser::printUsage(
             argv[0],
-            "Capture frames from all configured cameras.\n\n"
+            "Capture frames or four synchronized videos from the configured cameras.\n\n"
             "  --config FILE        config file (default: config/default.json)\n"
-            "  --frames N           number of frame sets (default: config)\n"
-            "  --interval SEC       delay between frame sets\n"
-            "  --out DIR            output directory (overrides config)\n"
+            "  --frames N           frame sets to capture (default: config)\n"
+            "  --interval SEC       delay between frame sets (images only)\n"
+            "  --out DIR            output directory\n"
+            "  --video              write cam0.mp4 ... cam3.mp4 instead of images\n"
+            "  --fps FPS            camera and video frame rate\n"
             "  --exposure US        exposure time for every camera\n"
             "  --gain DB            gain for every camera\n"
-            "  --fps FPS            frame rate limit for every camera\n"
             "  --pixel-format NAME  BayerRG8 (default), BGR8, RGB8, ...\n"
             "  --width W --height H override ROI\n"
             "  --serial S           select camera by serial (repeatable, fixes order)\n"
             "  --software-trigger   trigger all cameras through TriggerSoftware\n"
-            "  --raw                also save the transport buffer\n"
-            "  --format png|jpg|bmp output image encoding\n"
+            "  --raw                also save the transport buffer (images only)\n"
+            "  --format png|jpg|bmp output image encoding (images only)\n"
             "  --no-save            grab and report without writing files\n");
         return 0;
     }
@@ -135,7 +153,6 @@ int main(int argc, char** argv) {
 
     try {
         hikquad::AppConfig config = hikquad::app::loadAppConfig(cli);
-        const std::string config_path = hikquad::app::resolveConfigOrThrow(cli);
 
         const std::vector<std::string> serials = cli.getAll("--serial");
         if (!serials.empty()) {
@@ -159,10 +176,18 @@ int main(int argc, char** argv) {
         const int height = cli.getInt("--height", 0);
         const std::string pixel_format = cli.get("--pixel-format");
         const bool raw = cli.has("--raw") || config.capture.save_raw;
+        const bool video = cli.has("--video");
         const bool software_trigger =
             cli.has("--software-trigger") || config.capture.software_trigger;
         const std::string format = cli.get("--format", config.capture.image_format);
         const bool save = !cli.has("--no-save");
+
+        if (video && raw) {
+            std::cerr << "warning: --raw is ignored with --video\n";
+        }
+        if (video && interval > 0.0) {
+            std::cerr << "warning: --interval is ignored with --video\n";
+        }
 
         for (auto& camera : config.array.cameras) {
             if (exposure > 0.0) {
@@ -182,7 +207,7 @@ int main(int argc, char** argv) {
             if (!pixel_format.empty()) {
                 camera.pixel_format = pixel_format;
             }
-            camera.keep_raw = raw;
+            camera.keep_raw = raw && !video;
             if (software_trigger) {
                 camera.trigger_mode = "On";
                 camera.trigger_source = "Software";
@@ -193,17 +218,20 @@ int main(int argc, char** argv) {
         if (software_trigger) {
             HIKQUAD_LOG(Warn)
                 << "software trigger is timing sensitive on a shared USB3 hub; if frames are "
-                   "reported incomplete, use free-run at 30-60 fps or a hardware trigger";
+                   "reported incomplete, use free-run at 20 fps or a hardware trigger";
         }
 
-        std::string output = cli.get("--out");
-        if (output.empty()) {
-            output = hikquad::resolveConfigPath(config_path, config.capture.output_dir);
+        const std::string output =
+            fs::absolute(hikquad::app::pathOption(cli, "--out", config.capture.output_dir))
+                .string();
+        if (save) {
+            hikquad::app::ensureDirectory(output);
         }
 
         hikquad::CameraArray array;
         array.open(config.array);
         const std::vector<hikquad::CameraSettings> settings = array.settings();
+        double video_fps = 20.0;
         for (const auto& camera : settings) {
             std::cout << "camera " << camera.role << " [" << camera.serial << "]: " << camera.width
                       << "x" << camera.height << " " << camera.pixel_format
@@ -212,27 +240,60 @@ int main(int argc, char** argv) {
                       << " resulting=" << camera.resulting_frame_rate
                       << " usb_ways=" << camera.usb_transfer_ways
                       << " usb_transfer=" << camera.usb_transfer_size << "\n";
-        }
-
-        const std::vector<hikquad::FrameSet> sets = array.capture(frames, interval);
-        for (size_t i = 0; i < sets.size(); ++i) {
-            std::cout << hikquad::formatFrameSetSummary(sets[i]) << "\n";
-            if (save) {
-                const std::string directory =
-                    frames == 1
-                        ? output
-                        : (fs::path(output) / ("frame_" +
-                                               [&]() {
-                                                   std::ostringstream out;
-                                                   out << std::setw(3) << std::setfill('0') << i;
-                                                   return out.str();
-                                               }()))
-                              .string();
-                saveFrameSet(sets[i], directory, format, raw, settings);
-                std::cout << "saved " << directory << "\n";
+            if (camera.resulting_frame_rate > 0.0) {
+                video_fps = camera.resulting_frame_rate;
+            } else if (camera.frame_rate > 0.0) {
+                video_fps = camera.frame_rate;
             }
         }
+
+        std::vector<std::unique_ptr<cv::VideoWriter>> writers;
+        for (int i = 0; i < frames; ++i) {
+            const hikquad::FrameSet set = array.captureOnce();
+            std::cout << hikquad::formatFrameSetSummary(set) << "\n";
+
+            if (save && video) {
+                if (writers.empty()) {
+                    for (const auto& frame : set.frames) {
+                        const std::string path = (fs::path(output) /
+                                                  ("cam" + std::to_string(frame.camera_index) +
+                                                   ".mp4"))
+                                                     .string();
+                        auto writer = std::make_unique<cv::VideoWriter>(
+                            path, cv::VideoWriter::fourcc('m', 'p', '4', 'v'), video_fps,
+                            frame.bgr.size());
+                        if (!writer->isOpened()) {
+                            throw std::runtime_error("cannot open video writer: " + path);
+                        }
+                        writers.push_back(std::move(writer));
+                    }
+                }
+                for (const auto& frame : set.frames) {
+                    if (frame.camera_index < 0 ||
+                        static_cast<size_t>(frame.camera_index) >= writers.size() ||
+                        frame.bgr.empty()) {
+                        continue;
+                    }
+                    writers[static_cast<size_t>(frame.camera_index)]->write(frame.bgr);
+                }
+            } else if (save) {
+                const std::string directory =
+                    frames == 1 ? output : frameDirectory(output, i);
+                saveFrameSet(set, directory, format, raw, settings);
+                std::cout << "saved " << directory << "\n";
+            }
+
+            if (!video && interval > 0.0 && i + 1 < frames) {
+                std::this_thread::sleep_for(std::chrono::duration<double>(interval));
+            }
+        }
+
         array.stop();
+        writers.clear();
+        if (save && video) {
+            std::cout << "saved " << settings.size() << " videos to " << output << " at "
+                      << video_fps << " fps\n";
+        }
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "error: " << error.what() << "\n";

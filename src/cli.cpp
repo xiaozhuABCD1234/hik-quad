@@ -2,35 +2,13 @@
 
 #include <cstdlib>
 #include <iostream>
-#include <set>
 #include <sstream>
 
 namespace hikquad {
-namespace {
-
-bool isFlagOption(const std::string& name) {
-    static const std::set<std::string> flags = {
-        "--raw",  "--software-trigger", "--no-save",         "--verbose", "--quiet",     "--help",
-        "--json", "--no-lut",           "--include-virtual", "--check",   "--horizontal"};
-    return flags.count(name) != 0;
-}
-
-}  // namespace
 
 CliParser::CliParser(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         tokens_.emplace_back(argv[i]);
-    }
-    for (size_t i = 0; i < tokens_.size(); ++i) {
-        const std::string& token = tokens_[i];
-        if (token.rfind("--", 0) == 0) {
-            continue;
-        }
-        if (i > 0 && tokens_[i - 1].rfind("--", 0) == 0 &&
-            tokens_[i - 1].find('=') == std::string::npos && !isFlagOption(tokens_[i - 1])) {
-            continue;
-        }
-        positional_.push_back(token);
     }
 }
 

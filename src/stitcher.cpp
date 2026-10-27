@@ -1,24 +1,10 @@
 #include "hikquad/stitcher.hpp"
 
-#include <algorithm>
 #include <opencv2/imgproc.hpp>
 #include <stdexcept>
 #include <vector>
 
 namespace hikquad {
-
-cv::Mat stitchWithLuts(const std::vector<cv::Mat>& images, const std::vector<cv::Mat>& mapx,
-                       const std::vector<cv::Mat>& mapy, const std::vector<cv::Mat>& weight,
-                       int out_width, int out_height) {
-    StitchInput input;
-    input.images = images;
-    input.mapx = mapx;
-    input.mapy = mapy;
-    input.weight = weight;
-    input.out_width = out_width;
-    input.out_height = out_height;
-    return stitchFrames(input);
-}
 
 cv::Mat stitchFrames(const StitchInput& input) {
     const size_t count = input.images.size();
@@ -53,8 +39,8 @@ cv::Mat stitchFrames(const StitchInput& input) {
         }
         cv::Mat warped_float;
         warped.convertTo(warped_float, CV_32FC3);
+        const cv::Mat channels[] = {input.weight[i], input.weight[i], input.weight[i]};
         cv::Mat weight3;
-        cv::Mat channels[] = {input.weight[i], input.weight[i], input.weight[i]};
         cv::merge(channels, 3, weight3);
         cv::Mat weighted;
         cv::multiply(warped_float, weight3, weighted);

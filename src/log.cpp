@@ -3,12 +3,9 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
-#include <cstdlib>
-#include <cstring>
 #include <ctime>
 #include <mutex>
 #include <string>
-#include <thread>
 
 namespace hikquad {
 namespace {
@@ -20,10 +17,6 @@ std::mutex g_mutex;
 
 void setLogLevel(LogLevel level) noexcept {
     g_level.store(level, std::memory_order_relaxed);
-}
-
-LogLevel logLevel() noexcept {
-    return g_level.load(std::memory_order_relaxed);
 }
 
 const char* logLevelName(LogLevel level) noexcept {

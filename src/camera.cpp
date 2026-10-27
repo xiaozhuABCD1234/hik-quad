@@ -3,8 +3,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
-#include <cstring>
-#include <iomanip>
 #include <mutex>
 #include <opencv2/imgproc.hpp>
 #include <sstream>
@@ -30,16 +28,28 @@ namespace {
 std::mutex g_sdk_mutex;
 int g_sdk_users = 0;
 
+/// Environment variables already set by the user take precedence.
+void setEnvIfUnset(const char* key, const std::string& value) {
+    if (std::getenv(key) != nullptr) {
+        return;
+    }
+#if defined(_WIN32)
+    _putenv_s(key, value.c_str());
+#else
+    setenv(key, value.c_str(), 1);
+#endif
+}
+
+/// The MVS runtime resolves its data files relative to these variables, so set
+/// them before the first SDK call instead of requiring set_env_path.sh.
 void prepareSdkEnvironment() {
-    const char* root = HIK_QUAD_MVS_ROOT;
-    const char* lib = HIK_QUAD_MVS_LIB_DIR;
-    setenv("MVCAM_SDK_PATH", root, 0);
-    setenv("MVCAM_COMMON_RUNENV", lib, 0);
-    setenv("MVCAM_SOFTWARE_LIBENV", lib, 0);
-    std::string cl_protocol = std::string(lib) + "/CLProtocol";
-    setenv("MVCAM_GENICAM_CLPROTOCOL", cl_protocol.c_str(), 0);
-    std::string mvfg = std::string(root) + "/MVFG";
-    setenv("ALLUSERSPROFILE", mvfg.c_str(), 0);
+    const std::string root = HIK_QUAD_MVS_ROOT;
+    const std::string lib = HIK_QUAD_MVS_LIB_DIR;
+    setEnvIfUnset("MVCAM_SDK_PATH", root);
+    setEnvIfUnset("MVCAM_COMMON_RUNENV", lib);
+    setEnvIfUnset("MVCAM_SOFTWARE_LIBENV", lib);
+    setEnvIfUnset("MVCAM_GENICAM_CLPROTOCOL", lib + "/CLProtocol");
+    setEnvIfUnset("ALLUSERSPROFILE", root + "/MVFG");
 }
 
 void acquireSdk() {
@@ -64,14 +74,6 @@ void releaseSdk() noexcept {
             MV_CC_Finalize();
         }
     }
-}
-
-std::string decode(const unsigned char* data, size_t capacity) {
-    size_t length = 0;
-    while (length < capacity && data[length] != 0) {
-        ++length;
-    }
-    return std::string(reinterpret_cast<const char*>(data), length);
 }
 
 std::string enumSymbolic(void* handle, const char* key) {
@@ -116,93 +118,39 @@ MV_GRAB_STRATEGY grabStrategy(const std::string& name) {
     return MV_GrabStrategy_OneByOne;
 }
 
-std::string joinAvailable(const std::vector<DeviceInfo>& devices) {
+void reportIgnored(const char* operation, int result, const std::string& detail = {}) {
+    HIKQUAD_LOG(Warn) << operation << " ignored: " << mvsErrorText(result) << detail;
+}
+
+std::string joinAvailable(const std::vector<UsbDevice>& devices) {
     std::ostringstream out;
     for (size_t i = 0; i < devices.size(); ++i) {
         if (i != 0) {
             out << ", ";
         }
-        out << devices[i].displayName();
+        out << devices[i].info.displayName();
     }
     return out.str();
 }
 
-bool findRawDevice(const CameraConfig& config, MV_CC_DEVICE_INFO* raw, DeviceInfo* info) {
-    MV_CC_DEVICE_INFO_LIST list{};
-    int result = MV_CC_EnumDevicesEx2(MV_USB_DEVICE, &list, "Hikrobot", SortMethod_SerialNumber);
-    if (result != MV_OK) {
-        result = MV_CC_EnumDevices(MV_USB_DEVICE, &list);
-    }
-    if (result != MV_OK) {
-        throw SdkError(result, "MV_CC_EnumDevicesEx2");
-    }
-
-    struct Candidate {
-        MV_CC_DEVICE_INFO raw;
-        DeviceInfo info;
-    };
-    std::vector<Candidate> candidates;
-    for (unsigned int i = 0; i < list.nDeviceNum; ++i) {
-        if (list.pDeviceInfo[i] == nullptr || list.pDeviceInfo[i]->nTLayerType != MV_USB_DEVICE) {
-            continue;
-        }
-        const MV_USB3_DEVICE_INFO& usb = list.pDeviceInfo[i]->SpecialInfo.stUsb3VInfo;
-        const std::string serial = decode(usb.chSerialNumber, sizeof(usb.chSerialNumber));
-        if (serial.rfind("Vir", 0) == 0) {
-            continue;
-        }
-        Candidate candidate;
-        candidate.raw = *list.pDeviceInfo[i];
-        candidate.info.serial = serial;
-        candidate.info.model = decode(usb.chModelName, sizeof(usb.chModelName));
-        candidate.info.vendor = decode(usb.chVendorName, sizeof(usb.chVendorName));
-        candidate.info.family = decode(usb.chFamilyName, sizeof(usb.chFamilyName));
-        candidate.info.firmware = decode(usb.chDeviceVersion, sizeof(usb.chDeviceVersion));
-        candidate.info.usb_address = usb.nDeviceAddress;
-        candidate.info.bcd_usb = usb.nbcdUSB;
-        candidate.info.link = findUsbLink(serial);
-        candidates.push_back(std::move(candidate));
-    }
-    std::sort(candidates.begin(), candidates.end(),
-              [](const Candidate& a, const Candidate& b) { return a.info.serial < b.info.serial; });
-
-    for (size_t i = 0; i < candidates.size(); ++i) {
-        candidates[i].info.index = static_cast<int>(i);
-    }
-
-    for (const auto& candidate : candidates) {
-        const bool serial_match = !config.serial.empty() && candidate.info.serial == config.serial;
+/// Resolves a configured serial (or index into the serial-sorted list) to the
+/// raw MVS record needed by MV_CC_CreateHandle().
+void findRawDevice(const CameraConfig& config, MV_CC_DEVICE_INFO* raw, DeviceInfo* info) {
+    const std::vector<UsbDevice> devices = enumerateUsbDeviceRecords();
+    for (size_t i = 0; i < devices.size(); ++i) {
+        const UsbDevice& device = devices[i];
+        const bool serial_match = !config.serial.empty() && device.info.serial == config.serial;
         const bool index_match =
-            config.serial.empty() && config.index >= 0 && candidate.info.index == config.index;
+            config.serial.empty() && config.index >= 0 && config.index == static_cast<int>(i);
         if (serial_match || index_match) {
-            *raw = candidate.raw;
-            *info = candidate.info;
-            return true;
+            *raw = device.raw;
+            *info = device.info;
+            return;
         }
     }
     throw std::runtime_error("camera not found (requested serial='" + config.serial + "', index=" +
-                             std::to_string(config.index) + "). Available: " + joinAvailable([&]() {
-                                 std::vector<DeviceInfo> devices;
-                                 for (const auto& candidate : candidates) {
-                                     devices.push_back(candidate.info);
-                                 }
-                                 return devices;
-                             }()));
-}
-
-bool isEightBit(MvGvspPixelType type) {
-    return type == PixelType_Gvsp_Mono8 || type == PixelType_Gvsp_BayerGR8 ||
-           type == PixelType_Gvsp_BayerRG8 || type == PixelType_Gvsp_BayerGB8 ||
-           type == PixelType_Gvsp_BayerBG8 || type == PixelType_Gvsp_RGB8_Packed ||
-           type == PixelType_Gvsp_BGR8_Packed;
-}
-
-bool isSixteenBitContainer(MvGvspPixelType type) {
-    return type == PixelType_Gvsp_Mono10 || type == PixelType_Gvsp_Mono12 ||
-           type == PixelType_Gvsp_BayerGR10 || type == PixelType_Gvsp_BayerRG10 ||
-           type == PixelType_Gvsp_BayerGB10 || type == PixelType_Gvsp_BayerBG10 ||
-           type == PixelType_Gvsp_BayerGR12 || type == PixelType_Gvsp_BayerRG12 ||
-           type == PixelType_Gvsp_BayerGB12 || type == PixelType_Gvsp_BayerBG12;
+                             std::to_string(config.index) + "). Available: " +
+                             joinAvailable(devices));
 }
 
 }  // namespace
@@ -242,9 +190,7 @@ struct Camera::Impl {
         if (required) {
             checkMvs(result, operation, std::string(key) + "=" + value);
         }
-        HIKQUAD_LOG(Warn) << operation << " ignored: 0x" << std::hex
-                          << static_cast<unsigned int>(result) << " (" << mvsErrorName(result)
-                          << ")";
+        reportIgnored(operation, result);
     }
 
     void setInt(const char* key, int64_t value, bool required, const char* operation) {
@@ -255,9 +201,7 @@ struct Camera::Impl {
         if (required) {
             checkMvs(result, operation, std::string(key) + "=" + std::to_string(value));
         }
-        HIKQUAD_LOG(Warn) << operation << " ignored: 0x" << std::hex
-                          << static_cast<unsigned int>(result) << " (" << mvsErrorName(result)
-                          << ")";
+        reportIgnored(operation, result);
     }
 
     void setFloat(const char* key, double value, bool required, const char* operation) {
@@ -268,9 +212,7 @@ struct Camera::Impl {
         if (required) {
             checkMvs(result, operation, std::string(key) + "=" + std::to_string(value));
         }
-        HIKQUAD_LOG(Warn) << operation << " ignored: 0x" << std::hex
-                          << static_cast<unsigned int>(result) << " (" << mvsErrorName(result)
-                          << ")";
+        reportIgnored(operation, result);
     }
 
     void setBool(const char* key, bool value, bool required, const char* operation) {
@@ -281,9 +223,7 @@ struct Camera::Impl {
         if (required) {
             checkMvs(result, operation, std::string(key) + "=" + (value ? "true" : "false"));
         }
-        HIKQUAD_LOG(Warn) << operation << " ignored: 0x" << std::hex
-                          << static_cast<unsigned int>(result) << " (" << mvsErrorName(result)
-                          << ")";
+        reportIgnored(operation, result);
     }
 
     void apply(const CameraConfig& config) {
@@ -367,9 +307,8 @@ struct Camera::Impl {
                 MV_USB_SetTransferWays(handle, static_cast<unsigned int>(config.usb_transfer_ways));
             if (result != MV_OK) {
                 HIKQUAD_LOG(Warn) << "MV_USB_SetTransferWays(" << config.usb_transfer_ways
-                                  << ") ignored: 0x" << std::hex
-                                  << static_cast<unsigned int>(result) << " ("
-                                  << mvsErrorName(result) << "); this model supports up to 8";
+                                  << ") ignored: " << mvsErrorText(result)
+                                  << "; this model supports up to 8";
             }
         }
         if (config.usb_transfer_size > 0) {
@@ -381,9 +320,8 @@ struct Camera::Impl {
             } else {
                 const int result = MV_USB_SetTransferSize(handle, static_cast<unsigned int>(size));
                 if (result != MV_OK) {
-                    HIKQUAD_LOG(Warn)
-                        << "MV_USB_SetTransferSize(" << size << ") ignored: 0x" << std::hex
-                        << static_cast<unsigned int>(result) << " (" << mvsErrorName(result) << ")";
+                    HIKQUAD_LOG(Warn) << "MV_USB_SetTransferSize(" << size
+                                      << ") ignored: " << mvsErrorText(result);
                 }
             }
         }
@@ -393,17 +331,14 @@ struct Camera::Impl {
                 MV_CC_SetImageNodeNum(handle, static_cast<unsigned int>(config.image_node_num));
             if (result != MV_OK) {
                 HIKQUAD_LOG(Warn) << "MV_CC_SetImageNodeNum(" << config.image_node_num
-                                  << ") ignored: 0x" << std::hex
-                                  << static_cast<unsigned int>(result) << " ("
-                                  << mvsErrorName(result) << ")";
+                                  << ") ignored: " << mvsErrorText(result);
             }
         }
 
-        const int strategy = MV_CC_SetGrabStrategy(handle, grabStrategy(config.grab_strategy));
-        if (strategy != MV_OK) {
-            HIKQUAD_LOG(Warn) << "MV_CC_SetGrabStrategy ignored: 0x" << std::hex
-                              << static_cast<unsigned int>(strategy) << " ("
-                              << mvsErrorName(strategy) << ")";
+        const int strategy_result =
+            MV_CC_SetGrabStrategy(handle, grabStrategy(config.grab_strategy));
+        if (strategy_result != MV_OK) {
+            HIKQUAD_LOG(Warn) << "MV_CC_SetGrabStrategy ignored: " << mvsErrorText(strategy_result);
         }
 
         if (config.throughput_limit_mode || config.throughput_limit_mbps > 0.0) {
@@ -420,12 +355,11 @@ struct Camera::Impl {
                    "TransferSize (not exposed on every USB3 Vision model)");
         }
 
-        const int quality = MV_CC_SetBayerCvtQuality(
+        const int quality_result = MV_CC_SetBayerCvtQuality(
             handle, static_cast<unsigned int>(std::max(0, config.bayer_conversion_quality)));
-        if (quality != MV_OK) {
-            HIKQUAD_LOG(Debug) << "MV_CC_SetBayerCvtQuality ignored: 0x" << std::hex
-                               << static_cast<unsigned int>(quality) << " ("
-                               << mvsErrorName(quality) << ")";
+        if (quality_result != MV_OK) {
+            HIKQUAD_LOG(Debug) << "MV_CC_SetBayerCvtQuality ignored: "
+                               << mvsErrorText(quality_result);
         }
     }
 
@@ -441,15 +375,10 @@ struct Camera::Impl {
         if (out.pixel_format.empty()) {
             out.pixel_format = config.pixel_format;
         }
-        const PixelFormatInfo* format_info = pixelFormatByName(out.pixel_format);
-        out.pixel_type = format_info != nullptr ? format_info->type : PixelType_Gvsp_Undefined;
         out.frame_rate = readFloat(handle, "AcquisitionFrameRate", config.frame_rate);
         out.resulting_frame_rate = readFloat(handle, "ResultingFrameRate", 0.0);
         out.exposure_us = readFloat(handle, "ExposureTime", config.exposure_us);
         out.gain_db = readFloat(handle, "Gain", config.gain_db);
-        out.trigger_mode = enumSymbolic(handle, "TriggerMode");
-        out.trigger_source = enumSymbolic(handle, "TriggerSource");
-        out.image_node_num = config.image_node_num;
         unsigned int ways = 0;
         unsigned int transfer_size = 0;
         if (MV_USB_GetTransferWays(handle, &ways) == MV_OK) {
@@ -532,7 +461,7 @@ struct Camera::Impl {
         const int height_i = static_cast<int>(height);
 
         Frame result_frame;
-        result_frame.camera_index = config.index >= 0 ? config.index : device.index;
+        result_frame.camera_index = config.index >= 0 ? config.index : 0;
         result_frame.serial = device.serial;
         result_frame.sequence = ++sequence;
         result_frame.width = width;
@@ -553,7 +482,7 @@ struct Camera::Impl {
         result_frame.complete = true;
 
         if (config.keep_raw) {
-            if (isEightBit(info.enPixelType)) {
+            if (isEightBitContainer(info.enPixelType)) {
                 const int channels = (info.enPixelType == PixelType_Gvsp_RGB8_Packed ||
                                       info.enPixelType == PixelType_Gvsp_BGR8_Packed)
                                          ? 3
@@ -568,7 +497,7 @@ struct Camera::Impl {
                                   << result_frame.source_pixel_format
                                   << " is stored as an opaque byte stream";
                 result_frame.raw =
-                    cv::Mat(1, static_cast<int>(info.nFrameLen), CV_8UC1, out.pBufAddr).clone();
+                    cv::Mat(1, static_cast<int>(transport_size), CV_8UC1, out.pBufAddr).clone();
             }
         }
 
@@ -586,10 +515,11 @@ struct Camera::Impl {
             convert.nHeight = height;
             convert.enSrcPixelType = info.enPixelType;
             convert.pSrcData = out.pBufAddr;
-            convert.nSrcDataLen = info.nFrameLen;
+            convert.nSrcDataLen = static_cast<unsigned int>(transport_size);
             convert.enDstPixelType = PixelType_Gvsp_BGR8_Packed;
             convert.pDstBuffer = result_frame.bgr.data;
-            convert.nDstBufferSize = static_cast<unsigned int>(result_frame.bgr.total() * 3);
+            convert.nDstBufferSize = static_cast<unsigned int>(result_frame.bgr.total() *
+                                                               result_frame.bgr.elemSize());
             const int convert_result = MV_CC_ConvertPixelTypeEx(handle, &convert);
             if (convert_result != MV_OK) {
                 if (isBayer(info.enPixelType) && bytesPerPixel(info.enPixelType) == 1) {
@@ -632,9 +562,7 @@ void Camera::open(const CameraConfig& config) {
     }
     MV_CC_DEVICE_INFO raw{};
     DeviceInfo device;
-    if (!findRawDevice(config, &raw, &device)) {
-        throw std::runtime_error("camera selection failed");
-    }
+    findRawDevice(config, &raw, &device);
     const int create_result = MV_CC_CreateHandle(&impl_->handle, &raw);
     if (create_result != MV_OK) {
         impl_->handle = nullptr;
@@ -665,11 +593,6 @@ void Camera::open(const CameraConfig& config) {
 void Camera::close() noexcept {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->closeLocked();
-}
-
-bool Camera::isOpen() const noexcept {
-    std::lock_guard<std::mutex> lock(impl_->mutex);
-    return impl_->handle != nullptr;
 }
 
 void Camera::start() {
@@ -703,9 +626,7 @@ bool Camera::triggerSoftware() {
     }
     const int result = MV_CC_SetCommandValue(impl_->handle, "TriggerSoftware");
     if (result != MV_OK) {
-        HIKQUAD_LOG(Warn) << "TriggerSoftware failed: 0x" << std::hex
-                          << static_cast<unsigned int>(result) << " (" << mvsErrorName(result)
-                          << ")";
+        HIKQUAD_LOG(Warn) << "TriggerSoftware failed: " << mvsErrorText(result);
         return false;
     }
     return true;
@@ -717,55 +638,6 @@ CameraSettings Camera::settings() const {
     out.role = config_.role;
     out.model = device_.model;
     return out;
-}
-
-void Camera::setExposure(double microseconds) {
-    std::lock_guard<std::mutex> lock(impl_->mutex);
-    if (impl_->handle == nullptr) {
-        throw std::runtime_error("setExposure() called on a closed camera");
-    }
-    checkMvs(MV_CC_SetFloatValue(impl_->handle, "ExposureTime", static_cast<float>(microseconds)),
-             "MV_CC_SetFloatValue(ExposureTime)");
-    config_.exposure_us = microseconds;
-}
-
-void Camera::setGain(double db) {
-    std::lock_guard<std::mutex> lock(impl_->mutex);
-    if (impl_->handle == nullptr) {
-        throw std::runtime_error("setGain() called on a closed camera");
-    }
-    checkMvs(MV_CC_SetFloatValue(impl_->handle, "Gain", static_cast<float>(db)),
-             "MV_CC_SetFloatValue(Gain)");
-    config_.gain_db = db;
-}
-
-void Camera::setFrameRate(double fps) {
-    std::lock_guard<std::mutex> lock(impl_->mutex);
-    if (impl_->handle == nullptr) {
-        throw std::runtime_error("setFrameRate() called on a closed camera");
-    }
-    checkMvs(MV_CC_SetBoolValue(impl_->handle, "AcquisitionFrameRateEnable", true),
-             "MV_CC_SetBoolValue(AcquisitionFrameRateEnable)");
-    checkMvs(MV_CC_SetFloatValue(impl_->handle, "AcquisitionFrameRate", static_cast<float>(fps)),
-             "MV_CC_SetFloatValue(AcquisitionFrameRate)");
-    config_.frame_rate = fps;
-}
-
-std::string sdkVersion() {
-    const unsigned int version = MV_CC_GetSDKVersion();
-    std::ostringstream out;
-    out << ((version >> 24) & 0xFFu) << '.' << ((version >> 16) & 0xFFu) << '.'
-        << ((version >> 8) & 0xFFu) << '.' << (version & 0xFFu);
-    return out.str();
-}
-
-std::string toString(const CameraSettings& settings) {
-    std::ostringstream out;
-    out << settings.serial << " " << settings.width << "x" << settings.height << " "
-        << settings.pixel_format << " fps=" << settings.frame_rate
-        << " resulting=" << settings.resulting_frame_rate << " exp=" << settings.exposure_us
-        << "us gain=" << settings.gain_db << "dB trigger=" << settings.trigger_mode;
-    return out.str();
 }
 
 }  // namespace hikquad

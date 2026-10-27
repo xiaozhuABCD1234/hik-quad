@@ -64,7 +64,6 @@ add_library(HikSDK::MvCameraControl SHARED IMPORTED)
 set_target_properties(HikSDK::MvCameraControl PROPERTIES
   IMPORTED_LOCATION "${HIK_SDK_LIBRARY}"
   INTERFACE_INCLUDE_DIRECTORIES "${HIK_SDK_INCLUDE_DIR}"
-  INTERFACE_COMPILE_DEFINITIONS "HIK_QUAD_HAS_MVS=1"
 )
 
 # The MVS runtime dlopen()s libFormatConversion/libMvUsb3vTL and the GenICam

@@ -1,24 +1,6 @@
-# Build trees
 build/
-cmake-build-*/
-compile_commands.json
-CMakeUserPresets.json
-
-# IDE / editor
+data/
+output/
 .vscode/
 .idea/
-*.swp
-*.swo
-.DS_Store
-
-# Runtime data (regenerate with scripts/capture_calibration.sh)
-data/captures/
-data/calib_images/
-data/calib/
-output/*
-!output/.gitkeep
-
-# Local overrides
-config/local.json
-*.local.json
 *.log

@@ -1,12 +1,7 @@
 #pragma once
 
-#include <chrono>
-#include <cstdlib>
 #include <filesystem>
-#include <fstream>
-#include <iostream>
 #include <opencv2/core.hpp>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -53,6 +48,13 @@ inline AppConfig loadAppConfig(const CliParser& cli) {
     return loadConfig(resolveConfigOrThrow(cli));
 }
 
+/// Reads a path option, falling back when it is missing or empty.
+inline std::string pathOption(const CliParser& cli, const std::string& name,
+                              const std::string& fallback) {
+    const std::string value = cli.get(name, fallback);
+    return value.empty() ? fallback : value;
+}
+
 inline cv::Size parseSize(const std::string& text, const cv::Size& fallback) {
     if (text.empty()) {
         return fallback;
@@ -94,47 +96,10 @@ inline BoardSpec parseBoard(const std::string& text, const BoardSpec& fallback) 
     }
 }
 
-inline bool parseOnOff(const std::string& text, bool fallback) {
-    if (text.empty()) {
-        return fallback;
-    }
-    if (text == "1" || text == "true" || text == "on" || text == "yes" || text == "On") {
-        return true;
-    }
-    if (text == "0" || text == "false" || text == "off" || text == "no" || text == "Off") {
-        return false;
-    }
-    return fallback;
-}
-
-inline std::string nowStamp() {
-    const auto now = std::chrono::system_clock::now();
-    const std::time_t time = std::chrono::system_clock::to_time_t(now);
-    std::tm tm_buf{};
-#if defined(_WIN32)
-    localtime_s(&tm_buf, &time);
-#else
-    localtime_r(&time, &tm_buf);
-#endif
-    char buffer[32];
-    std::strftime(buffer, sizeof(buffer), "%Y%m%d_%H%M%S", &tm_buf);
-    return std::string(buffer);
-}
-
-inline int usbMemoryMb() {
-    std::ifstream stream("/sys/module/usbcore/parameters/usbfs_memory_mb");
-    int value = 0;
-    if (stream.good()) {
-        stream >> value;
-    }
-    return value;
-}
-
-inline bool udevRuleInstalled() {
-    return std::filesystem::exists("/etc/udev/rules.d/80-drivers-SDK-2bdf.rules");
-}
-
 inline void ensureDirectory(const std::string& path) {
+    if (path.empty()) {
+        return;
+    }
     std::error_code ec;
     std::filesystem::create_directories(path, ec);
     if (ec) {

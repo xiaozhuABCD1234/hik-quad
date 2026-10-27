@@ -27,7 +27,7 @@ struct BinHeader {
 };
 #pragma pack(pop)
 
-static_assert(sizeof(BinHeader) == 24, "quad-camera binary header must stay 24 bytes");
+static_assert(sizeof(BinHeader) == 24, "LUT binary header must stay 24 bytes");
 
 bool projectFisheye(const cv::Mat& R_cw, const cv::Mat& direction, const Intrinsics& intrinsics,
                     double* u, double* v, double* theta_d) {

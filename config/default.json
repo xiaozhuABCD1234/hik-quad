@@ -52,8 +52,7 @@
     "square_mm": 100.0,
     "model": "fisheye",
     "min_views": 10,
-    "max_rms": 1.0,
-    "emit_lut": true
+    "max_rms": 1.0
   },
   "panorama": {
     "out_width": 2048,

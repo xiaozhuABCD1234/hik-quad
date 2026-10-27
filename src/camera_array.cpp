@@ -8,7 +8,6 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
-#include <thread>
 #include <tuple>
 #include <utility>
 
@@ -46,7 +45,6 @@ std::vector<DeviceInfo> orderDevices(const std::vector<DeviceInfo>& devices,
 
 struct CameraArray::Impl {
     std::vector<std::unique_ptr<Camera>> cameras;
-    std::vector<DeviceInfo> devices;
     bool started = false;
     uint64_t sequence = 0;
     mutable std::mutex mutex;
@@ -58,7 +56,6 @@ struct CameraArray::Impl {
             }
         }
         cameras.clear();
-        devices.clear();
         started = false;
     }
 };
@@ -77,7 +74,7 @@ void CameraArray::open(const ArrayConfig& config) {
         throw std::invalid_argument("camera_count must be positive");
     }
 
-    const std::vector<DeviceInfo> available = enumerateUsbDevices(false);
+    const std::vector<DeviceInfo> available = enumerateUsbDevices();
     if (available.size() < static_cast<size_t>(config.camera_count)) {
         std::ostringstream message;
         message << "requested " << config.camera_count << " cameras but only " << available.size()
@@ -98,7 +95,6 @@ void CameraArray::open(const ArrayConfig& config) {
             // Pin the device in physical/USB order so camera_0..N is stable
             // across enumerations and independent of serial-number sorting.
             camera_config.serial = ordered[static_cast<size_t>(i)].serial;
-            camera_config.index = -1;
         }
         if (config.grab_timeout_ms > 0) {
             camera_config.grab_timeout_ms = config.grab_timeout_ms;
@@ -121,10 +117,9 @@ void CameraArray::open(const ArrayConfig& config) {
             impl_->closeAll();
             throw;
         }
-        impl_->devices.push_back(impl_->cameras.back()->deviceInfo());
         HIKQUAD_LOG(Info) << "camera " << i << " " << camera_config.role << " <- "
-                          << camera_config.serial << " (" << impl_->devices.back().link.port_path
-                          << ")";
+                          << camera_config.serial << " ("
+                          << impl_->cameras.back()->deviceInfo().link.port_path << ")";
     }
 
     try {
@@ -146,22 +141,6 @@ void CameraArray::open(const ArrayConfig& config) {
 void CameraArray::close() noexcept {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->closeAll();
-}
-
-bool CameraArray::isOpen() const noexcept {
-    std::lock_guard<std::mutex> lock(impl_->mutex);
-    return impl_->started;
-}
-
-void CameraArray::start() {
-    std::lock_guard<std::mutex> lock(impl_->mutex);
-    if (impl_->cameras.empty()) {
-        throw std::runtime_error("start() called on an empty camera array");
-    }
-    for (auto& camera : impl_->cameras) {
-        camera->start();
-    }
-    impl_->started = true;
 }
 
 void CameraArray::stop() noexcept {
@@ -234,21 +213,6 @@ FrameSet CameraArray::captureOnce() {
     return set;
 }
 
-std::vector<FrameSet> CameraArray::capture(int count, double interval_s) {
-    if (count <= 0) {
-        return {};
-    }
-    std::vector<FrameSet> sets;
-    sets.reserve(static_cast<size_t>(count));
-    for (int i = 0; i < count; ++i) {
-        sets.push_back(captureOnce());
-        if (interval_s > 0.0 && i + 1 < count) {
-            std::this_thread::sleep_for(std::chrono::duration<double>(interval_s));
-        }
-    }
-    return sets;
-}
-
 std::vector<CameraSettings> CameraArray::settings() const {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     std::vector<CameraSettings> out;
@@ -257,16 +221,6 @@ std::vector<CameraSettings> CameraArray::settings() const {
         out.push_back(camera->settings());
     }
     return out;
-}
-
-std::vector<DeviceInfo> CameraArray::devices() const {
-    std::lock_guard<std::mutex> lock(impl_->mutex);
-    return impl_->devices;
-}
-
-size_t CameraArray::size() const noexcept {
-    std::lock_guard<std::mutex> lock(impl_->mutex);
-    return impl_->cameras.size();
 }
 
 std::string formatFrameSetSummary(const FrameSet& set) {

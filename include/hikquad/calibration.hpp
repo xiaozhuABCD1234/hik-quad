@@ -37,10 +37,9 @@ struct Intrinsics {
 };
 
 struct Extrinsics {
-    cv::Mat R_cw;
-    cv::Mat T_cw;
+    cv::Mat R_cw;  // world = R_cw * camera + T_cw
+    cv::Mat T_cw;  // camera centre in world coordinates
     double center_angle_deg = 0.0;
-    bool has_angle = false;
 };
 
 struct Pose {
@@ -66,7 +65,6 @@ struct CameraCalibrationResult {
     Extrinsics extrinsics;
     std::vector<ViewObservation> observations;
     std::vector<Pose> board_poses;
-    int used_views = 0;
 };
 
 struct PairEdge {
@@ -102,5 +100,7 @@ double opticalAxisAngleDeg(const cv::Mat& R_cw);
 /// horizontal 4-camera ring where pitch/roll are known to be zero.
 Extrinsics horizontalizeExtrinsics(const Extrinsics& extrinsics);
 void applyHorizontalConstraint(CalibrationResult& result);
+
+std::string formatCalibrationSummary(const CalibrationResult& result);
 
 }  // namespace hikquad

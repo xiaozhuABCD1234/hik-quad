@@ -25,8 +25,10 @@ private:
     std::string hint_;
 };
 
-std::string mvsErrorName(int code);
-bool isTimeoutError(int code) noexcept;
+/// Human-readable MVS status, e.g. "0x80000005 MV_E_NODATA (timeout / no data)".
+std::string mvsErrorText(int code);
+
+/// Throws SdkError unless the code is MV_OK.
 void checkMvs(int code, const std::string& operation, const std::string& hint = {});
 
 }  // namespace hikquad

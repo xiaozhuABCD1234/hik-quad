@@ -36,7 +36,6 @@ struct CalibrationConfig {
     std::string model = "fisheye";
     int min_views = 10;
     double max_rms = 1.0;
-    bool emit_lut = true;
 };
 
 struct PanoramaConfig {
@@ -52,14 +51,14 @@ struct AppConfig {
     UsbConfig usb;
     CalibrationConfig calibration;
     PanoramaConfig panorama;
-    std::string source_path;
 };
 
+/// Loads the JSON configuration.  Relative paths inside the config are
+/// interpreted against the current working directory.
 AppConfig loadConfig(const std::string& path);
-void applyUsbDefaults(AppConfig& config);
-std::string resolveConfigPath(const std::string& config_path, const std::string& value);
+
+/// config/default.json next to the working directory, then next to the
+/// executable (build/../config).  Empty when neither exists.
 std::string findDefaultConfig();
-std::string toJson(const CameraSettings& settings);
-std::string toJson(const DeviceInfo& device);
 
 }  // namespace hikquad

@@ -54,28 +54,20 @@ struct CameraConfig {
     int grab_timeout_ms = 3000;
     int incomplete_frame_retries = 3;
     std::string grab_strategy = "OldestFirst";
-
-    bool valid() const {
-        return !serial.empty() || index >= 0;
-    }
 };
 
+/// State reported by the camera after the configuration was applied.
 struct CameraSettings {
     std::string serial;
     std::string role;
     std::string model;
     int width = 0;
     int height = 0;
-    MvGvspPixelType pixel_type = PixelType_Gvsp_Undefined;
     std::string pixel_format;
     double frame_rate = 0.0;
     double resulting_frame_rate = 0.0;
     double exposure_us = 0.0;
     double gain_db = 0.0;
-    std::string trigger_mode;
-    std::string trigger_source;
-    bool throughput_limit_mode = false;
-    int image_node_num = 0;
     unsigned int usb_transfer_ways = 0;
     unsigned int usb_transfer_size = 0;
 };
@@ -99,10 +91,6 @@ struct Frame {
     uint64_t expected_size = 0;
     uint32_t lost_packets = 0;
     bool complete = false;
-
-    bool valid() const {
-        return complete && (!bgr.empty() || !raw.empty());
-    }
 };
 
 class Camera {
@@ -115,7 +103,6 @@ public:
 
     void open(const CameraConfig& config);
     void close() noexcept;
-    bool isOpen() const noexcept;
 
     void start();
     void stop() noexcept;
@@ -126,16 +113,9 @@ public:
     bool triggerSoftware();
 
     CameraSettings settings() const;
-    const CameraConfig& config() const noexcept {
-        return config_;
-    }
     const DeviceInfo& deviceInfo() const noexcept {
         return device_;
     }
-
-    void setExposure(double microseconds);
-    void setGain(double db);
-    void setFrameRate(double fps);
 
 private:
     struct Impl;
@@ -143,10 +123,5 @@ private:
     CameraConfig config_;
     DeviceInfo device_;
 };
-
-std::string toString(const CameraSettings& settings);
-
-/// MVS SDK version as "major.minor.patch.build", e.g. "4.8.2.2".
-std::string sdkVersion();
 
 }  // namespace hikquad

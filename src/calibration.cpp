@@ -1,20 +1,17 @@
 #include "hikquad/calibration.hpp"
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <map>
-#include <numeric>
 #include <opencv2/calib3d.hpp>
-#include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
-#include "hikquad/log.hpp"
+#include "hikquad/media.hpp"
 
 namespace hikquad {
 namespace fs = std::filesystem;
@@ -23,14 +20,6 @@ namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 
-bool isImageFile(const fs::path& path) {
-    std::string extension = path.extension().string();
-    std::transform(extension.begin(), extension.end(), extension.begin(),
-                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    return extension == ".png" || extension == ".jpg" || extension == ".jpeg" ||
-           extension == ".bmp" || extension == ".tif" || extension == ".tiff";
-}
-
 std::vector<fs::path> listImages(const fs::path& directory) {
     std::vector<fs::path> files;
     std::error_code ec;
@@ -38,31 +27,12 @@ std::vector<fs::path> listImages(const fs::path& directory) {
         return files;
     }
     for (const auto& entry : fs::directory_iterator(directory, ec)) {
-        if (entry.is_regular_file() && isImageFile(entry.path())) {
+        if (entry.is_regular_file() && isImagePath(entry.path().string())) {
             files.push_back(entry.path());
         }
     }
     std::sort(files.begin(), files.end());
     return files;
-}
-
-std::string findCameraImage(const fs::path& directory, int camera_index) {
-    const std::vector<std::string> stems = {
-        "cam" + std::to_string(camera_index), "camera_" + std::to_string(camera_index),
-        std::to_string(camera_index), "cam_" + std::to_string(camera_index)};
-    std::error_code ec;
-    for (const auto& entry : fs::directory_iterator(directory, ec)) {
-        if (!entry.is_regular_file() || !isImageFile(entry.path())) {
-            continue;
-        }
-        const std::string stem = entry.path().stem().string();
-        for (const auto& candidate : stems) {
-            if (stem == candidate) {
-                return entry.path().string();
-            }
-        }
-    }
-    return {};
 }
 
 cv::Mat orthonormalize(const cv::Mat& rotation) {
@@ -306,10 +276,12 @@ std::vector<CalibrationView> discoverViews(const std::string& root, int camera_c
         view.image_paths.resize(static_cast<size_t>(camera_count));
         int found = 0;
         for (int camera = 0; camera < camera_count; ++camera) {
-            view.image_paths[static_cast<size_t>(camera)] = findCameraImage(directory, camera);
-            if (!view.image_paths[static_cast<size_t>(camera)].empty()) {
-                ++found;
+            const CameraMedia media = findCameraMedia(directory.string(), camera);
+            if (media.kind != MediaKind::Image) {
+                continue;
             }
+            view.image_paths[static_cast<size_t>(camera)] = media.path;
+            ++found;
         }
         if (found > 0) {
             views.push_back(std::move(view));
@@ -414,7 +386,6 @@ CameraCalibrationResult calibrateCamera(const std::vector<ViewObservation>& obse
     result.intrinsics.rms = rms;
     result.intrinsics.view_count = static_cast<int>(detected.size());
     result.observations = detected;
-    result.used_views = static_cast<int>(detected.size());
 
     double sum_error = 0.0;
     for (size_t i = 0; i < detected.size(); ++i) {
@@ -491,7 +462,6 @@ Extrinsics horizontalizeExtrinsics(const Extrinsics& extrinsics) {
         out.T_cw.at<double>(1, 0) = 0.0;
     }
     out.center_angle_deg = yaw;
-    out.has_angle = true;
     return out;
 }
 
@@ -499,7 +469,7 @@ void applyHorizontalConstraint(CalibrationResult& result) {
     for (auto& camera : result.cameras) {
         camera.extrinsics = horizontalizeExtrinsics(camera.extrinsics);
     }
-    result.warnings.emplace_back(
+    result.warnings.push_back(
         "horizontal constraint applied: pitch/roll removed, camera centres placed on the "
         "world XZ plane");
 }
@@ -522,15 +492,7 @@ void estimateExtrinsics(CalibrationResult& result, int camera_count, double nomi
         }
     }
 
-    struct Edge {
-        int a = -1;
-        int b = -1;
-        int common = 0;
-        cv::Mat R_ab;  // X_a = R_ab * X_b + t_ab
-        cv::Mat t_ab;
-        double spread = 0.0;
-    };
-    std::vector<Edge> edges;
+    // Each edge maps camera b into camera a: X_a = R * X_b + t.
     for (int a = 0; a < camera_count; ++a) {
         for (int b = a + 1; b < camera_count; ++b) {
             std::vector<cv::Mat> rotations;
@@ -550,25 +512,17 @@ void estimateExtrinsics(CalibrationResult& result, int camera_count, double nomi
             if (rotations.size() < 2) {
                 continue;
             }
-            Edge edge;
-            edge.a = a;
-            edge.b = b;
-            edge.common = static_cast<int>(rotations.size());
-            edge.R_ab = averageRotation(rotations);
-            edge.t_ab = averageTranslation(translations, &edge.spread);
-            edges.push_back(edge);
-            PairEdge public_edge;
-            public_edge.from = a;
-            public_edge.to = b;
-            public_edge.common_views = edge.common;
-            public_edge.R = edge.R_ab;
-            public_edge.t = edge.t_ab;
-            public_edge.translation_spread_m = edge.spread;
-            result.edges.push_back(public_edge);
+            PairEdge edge;
+            edge.from = a;
+            edge.to = b;
+            edge.common_views = static_cast<int>(rotations.size());
+            edge.R = averageRotation(rotations);
+            edge.t = averageTranslation(translations, &edge.translation_spread_m);
+            result.edges.push_back(edge);
         }
     }
 
-    if (edges.empty()) {
+    if (result.edges.empty()) {
         result.warnings.push_back(
             "no camera pair shared enough board views; using nominal 90-degree yaw and zero "
             "baseline");
@@ -587,22 +541,22 @@ void estimateExtrinsics(CalibrationResult& result, int camera_count, double nomi
     while (!queue.empty()) {
         const int current = queue.front();
         queue.erase(queue.begin());
-        for (const auto& edge : edges) {
+        for (const auto& edge : result.edges) {
             int next = -1;
             cv::Mat R_current_next;
             cv::Mat t_current_next;
-            if (edge.a == current && !known[static_cast<size_t>(edge.b)]) {
-                next = edge.b;
-                R_current_next = edge.R_ab;
-                t_current_next = edge.t_ab;
+            if (edge.from == current && !known[static_cast<size_t>(edge.to)]) {
+                next = edge.to;
+                R_current_next = edge.R;
+                t_current_next = edge.t;
                 // X_current = R * X_next + t  =>  X_next = R^T (X_current - t)
                 R[static_cast<size_t>(next)] = R_current_next.t() * R[static_cast<size_t>(current)];
                 t[static_cast<size_t>(next)] =
                     R_current_next.t() * (t[static_cast<size_t>(current)] - t_current_next);
-            } else if (edge.b == current && !known[static_cast<size_t>(edge.a)]) {
-                next = edge.a;
-                R_current_next = edge.R_ab.t();
-                t_current_next = -edge.R_ab.t() * edge.t_ab;
+            } else if (edge.to == current && !known[static_cast<size_t>(edge.from)]) {
+                next = edge.from;
+                R_current_next = edge.R.t();
+                t_current_next = -edge.R.t() * edge.t;
                 R[static_cast<size_t>(next)] = R_current_next * R[static_cast<size_t>(current)];
                 t[static_cast<size_t>(next)] =
                     R_current_next * t[static_cast<size_t>(current)] + t_current_next;
@@ -621,7 +575,7 @@ void estimateExtrinsics(CalibrationResult& result, int camera_count, double nomi
             extrinsics.T_cw = cv::Mat::zeros(3, 1, CV_64F);
         } else if (known[static_cast<size_t>(camera)]) {
             // BFS produced X_cam = R_i0 * X_world + t_i0 (world -> camera).
-            // quad-camera stores X_world = R_cw * X_cam + T_cw (camera -> world),
+            // Extrinsics store X_world = R_cw * X_cam + T_cw (camera -> world),
             // where T_cw is the camera centre.
             const cv::Mat R_i0 = orthonormalize(R[static_cast<size_t>(camera)]);
             const cv::Mat t_i0 = t[static_cast<size_t>(camera)];
@@ -634,7 +588,6 @@ void estimateExtrinsics(CalibrationResult& result, int camera_count, double nomi
                                       " has no connected pair; using nominal yaw");
         }
         extrinsics.center_angle_deg = opticalAxisAngleDeg(extrinsics.R_cw);
-        extrinsics.has_angle = true;
         result.cameras[static_cast<size_t>(camera)].extrinsics = extrinsics;
     }
 }

@@ -1,14 +1,9 @@
 #include "hikquad/config.hpp"
 
-#include <algorithm>
-#include <cctype>
 #include <filesystem>
 #include <opencv2/core.hpp>
-#include <sstream>
 #include <stdexcept>
 #include <string>
-
-#include "hikquad/paths.hpp"
 
 namespace hikquad {
 namespace fs = std::filesystem;
@@ -99,39 +94,10 @@ void readCamera(const cv::FileNode& node, CameraConfig* camera) {
     readDouble(node["throughput_limit_mbps"], &camera->throughput_limit_mbps);
 }
 
-std::string escapeJson(const std::string& value) {
-    std::string out;
-    out.reserve(value.size() + 8);
-    for (char ch : value) {
-        switch (ch) {
-            case '"':
-                out += "\\\"";
-                break;
-            case '\\':
-                out += "\\\\";
-                break;
-            case '\n':
-                out += "\\n";
-                break;
-            case '\r':
-                out += "\\r";
-                break;
-            case '\t':
-                out += "\\t";
-                break;
-            default:
-                out += ch;
-                break;
-        }
-    }
-    return out;
-}
-
 }  // namespace
 
 AppConfig loadConfig(const std::string& path) {
     AppConfig config;
-    config.source_path = path;
     config.array.camera_count = 4;
 
     cv::FileStorage storage;
@@ -169,7 +135,6 @@ AppConfig loadConfig(const std::string& path) {
     readString(storage["calibration"]["model"], &config.calibration.model);
     readInt(storage["calibration"]["min_views"], &config.calibration.min_views);
     readDouble(storage["calibration"]["max_rms"], &config.calibration.max_rms);
-    readBool(storage["calibration"]["emit_lut"], &config.calibration.emit_lut);
 
     readInt(storage["panorama"]["out_width"], &config.panorama.out_width);
     readInt(storage["panorama"]["out_height"], &config.panorama.out_height);
@@ -226,97 +191,22 @@ AppConfig loadConfig(const std::string& path) {
         throw std::runtime_error("panorama.fov_h_deg must be positive");
     }
 
-    applyUsbDefaults(config);
     return config;
 }
 
-void applyUsbDefaults(AppConfig& config) {
-    for (auto& camera : config.array.cameras) {
-        if (camera.image_node_num <= 0) {
-            camera.image_node_num = config.usb.image_node_num;
-        }
-        if (camera.usb_transfer_ways <= 0) {
-            camera.usb_transfer_ways = config.usb.usb_transfer_ways;
-        }
-        if (camera.usb_transfer_size <= 0) {
-            camera.usb_transfer_size = config.usb.usb_transfer_size;
-        }
-        if (camera.grab_timeout_ms <= 0) {
-            camera.grab_timeout_ms = config.usb.grab_timeout_ms;
-        }
-        if (camera.incomplete_frame_retries < 0) {
-            camera.incomplete_frame_retries = config.usb.incomplete_frame_retries;
-        }
-        if (camera.grab_strategy.empty()) {
-            camera.grab_strategy = config.usb.grab_strategy;
-        }
-    }
-    config.array.grab_timeout_ms = config.usb.grab_timeout_ms;
-}
-
-std::string resolveConfigPath(const std::string& config_path, const std::string& value) {
-    if (value.empty()) {
-        return value;
-    }
-    const fs::path path(value);
-    if (path.is_absolute()) {
-        return path.string();
-    }
-    fs::path base = fs::path(config_path).parent_path();
-    if (base.empty()) {
-        base = fs::current_path();
-    }
-    return (base / path).string();
-}
-
 std::string findDefaultConfig() {
-    const std::string root = projectRoot();
-    if (!root.empty()) {
-        const std::string candidate = (fs::path(root) / "config" / "default.json").string();
-        if (fs::exists(candidate)) {
-            return candidate;
-        }
-    }
-    if (fs::exists("config/default.json")) {
+    std::error_code ec;
+    if (fs::exists("config/default.json", ec)) {
         return "config/default.json";
     }
-    const std::string executable = executableDirectory();
-    if (!executable.empty()) {
-        const fs::path directory(executable);
-        const fs::path candidates[] = {
-            directory / "config" / "default.json",
-            directory / ".." / "share" / "hik-quad" / "config" / "default.json",
-            directory / ".." / "etc" / "hik-quad" / "default.json",
-        };
-        for (const auto& candidate : candidates) {
-            std::error_code ec;
-            if (fs::exists(candidate, ec)) {
-                return fs::canonical(candidate, ec).string();
-            }
+    const fs::path executable = fs::read_symlink("/proc/self/exe", ec);
+    if (!ec) {
+        const fs::path candidate = executable.parent_path().parent_path() / "config" / "default.json";
+        if (fs::exists(candidate, ec)) {
+            return candidate.string();
         }
     }
     return {};
-}
-
-std::string toJson(const CameraSettings& settings) {
-    std::ostringstream out;
-    out << "{\"serial\":\"" << escapeJson(settings.serial) << "\"," << "\"model\":\""
-        << escapeJson(settings.model) << "\"," << "\"width\":" << settings.width
-        << ",\"height\":" << settings.height << "," << "\"pixel_format\":\""
-        << escapeJson(settings.pixel_format) << "\"," << "\"frame_rate\":" << settings.frame_rate
-        << "," << "\"resulting_frame_rate\":" << settings.resulting_frame_rate << ","
-        << "\"exposure_us\":" << settings.exposure_us << ",\"gain_db\":" << settings.gain_db << "}";
-    return out.str();
-}
-
-std::string toJson(const DeviceInfo& device) {
-    std::ostringstream out;
-    out << "{\"index\":" << device.index << ",\"serial\":\"" << escapeJson(device.serial)
-        << "\",\"model\":\"" << escapeJson(device.model) << "\",\"vendor\":\""
-        << escapeJson(device.vendor) << "\",\"usb_port\":\"" << escapeJson(device.link.port_path)
-        << "\",\"usb_speed_mbps\":" << device.link.speed_mbps
-        << ",\"virtual\":" << (device.virtual_device ? "true" : "false") << "}";
-    return out.str();
 }
 
 }  // namespace hikquad

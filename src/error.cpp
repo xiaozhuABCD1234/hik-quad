@@ -1,12 +1,14 @@
 #include "hikquad/error.hpp"
 
 #include <sstream>
+#include <utility>
 
 #include "MvErrorDefine.h"
 
 namespace hikquad {
+namespace {
 
-std::string mvsErrorName(int code) {
+const char* mvsErrorName(int code) {
     switch (static_cast<unsigned int>(code)) {
         case MV_OK:
             return "MV_OK";
@@ -45,22 +47,22 @@ std::string mvsErrorName(int code) {
         case MV_E_GC_TIMEOUT:
             return "MV_E_GC_TIMEOUT (GenICam timeout)";
         default:
-            break;
+            return "unknown MVS error";
     }
-    std::ostringstream out;
-    out << "unknown MVS error";
-    return out.str();
 }
 
-bool isTimeoutError(int code) noexcept {
-    return static_cast<unsigned int>(code) == MV_E_NODATA;
+}  // namespace
+
+std::string mvsErrorText(int code) {
+    std::ostringstream out;
+    out << "0x" << std::hex << static_cast<unsigned int>(code) << " " << mvsErrorName(code);
+    return out.str();
 }
 
 SdkError::SdkError(int code, std::string operation, std::string hint)
     : std::runtime_error([&]() {
           std::ostringstream out;
-          out << operation << " failed: 0x" << std::hex << static_cast<unsigned int>(code) << " ("
-              << mvsErrorName(code) << ")";
+          out << operation << " failed: " << mvsErrorText(code);
           if (!hint.empty()) {
               out << "\n  hint: " << hint;
           }

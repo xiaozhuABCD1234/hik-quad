@@ -15,8 +15,5 @@ struct StitchInput {
 };
 
 cv::Mat stitchFrames(const StitchInput& input);
-cv::Mat stitchWithLuts(const std::vector<cv::Mat>& images, const std::vector<cv::Mat>& mapx,
-                       const std::vector<cv::Mat>& mapy, const std::vector<cv::Mat>& weight,
-                       int out_width, int out_height);
 
 }  // namespace hikquad

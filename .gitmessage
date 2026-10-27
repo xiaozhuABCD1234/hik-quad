@@ -1,8 +1,0 @@
-# <type>(<scope>): <subject>
-#
-# type: feat|fix|docs|test|refactor|perf|build|ci|chore|revert
-# scope: driver|capture|calib|lut|stitch|config|build|docs|test
-#
-# Body (why / what changed, wrap at 72 columns)
-#
-# Footer (BREAKING CHANGE, refs)
